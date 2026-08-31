@@ -30,6 +30,8 @@ def checkout(issue_n: int) -> Path:
                        capture_output=True, text=True, timeout=300, check=True)
     _git(workdir, "fetch", "origin")
     _git(workdir, "checkout", "-B", f"agent/{issue_n}", "origin/main")
+    _git(workdir, "reset", "--hard")
+    _git(workdir, "clean", "-fdx")
     return workdir
 
 

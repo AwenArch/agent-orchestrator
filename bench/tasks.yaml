@@ -1,0 +1,91 @@
+# 10 graduated benchmark tasks. Frozen once the first bench run starts -
+# edits after that invalidate cross-model comparison.
+- id: 1
+  title: "Add double-jump to the player"
+  body: >
+    Modify scenes/player/player.gd so the player can jump a second time while
+    airborne (one extra jump before landing). Grounded jump behavior must be
+    unchanged. Add tests/unit/test_double_jump.gd proving: (a) a second jump
+    while airborne sets velocity.y negative again, (b) a third jump while
+    airborne does nothing.
+
+- id: 2
+  title: "Coin pickup scene with score signal"
+  body: >
+    Create scenes/coin/coin.gd and scenes/coin/coin.tscn description as code:
+    an Area2D coin that emits a signal collected() and frees itself when the
+    player (CharacterBody2D) overlaps it. Add tests/unit/test_coin.gd proving
+    the signal fires and the coin frees on overlap. If you cannot create a
+    .tscn, build the node tree in code inside the test.
+
+- id: 3
+  title: "Score autoload with HUD-ready API"
+  body: >
+    Create scripts/score.gd, a plain Node intended for use as an autoload:
+    methods add(points: int) -> void and reset() -> void, a read-only current
+    score via get_score() -> int, and a signal score_changed(new_total: int).
+    Add tests/unit/test_score.gd covering add, reset, and the signal payload.
+    Do NOT edit project.godot; the test should instantiate the script directly.
+
+- id: 4
+  title: "Patrolling enemy between two points"
+  body: >
+    Create scenes/enemy/enemy.gd: a CharacterBody2D that moves horizontally
+    between two x positions (exported as left_x and right_x), reversing
+    direction at each bound, at an exported speed. Add
+    tests/unit/test_enemy.gd proving it reverses direction at a bound after
+    enough physics frames.
+
+- id: 5
+  title: "Player death and respawn on enemy contact"
+  body: >
+    Add a die() method to scenes/player/player.gd that emits a signal died and
+    resets the player's position to an exported spawn_position. Add
+    tests/unit/test_player_death.gd proving die() emits the signal and resets
+    position. Do not implement collision wiring; just the method and signal.
+
+- id: 6
+  title: "Pause manager"
+  body: >
+    Create scripts/pause_manager.gd: a Node with toggle_pause() that flips
+    get_tree().paused and a read-only is_paused() -> bool. It must also
+    handle unhandled input for ui_cancel to call toggle_pause(). Add
+    tests/unit/test_pause.gd for toggle_pause() and is_paused() (call methods
+    directly; do not simulate input). Ensure the tree is unpaused when the
+    test finishes.
+
+- id: 7
+  title: "Coyote time for jumps"
+  body: >
+    Modify scenes/player/player.gd to allow a jump for up to 0.1 seconds
+    (exported as coyote_time) after walking off a ledge, without being on the
+    floor. Regular grounded jumps unchanged. Add tests/unit/test_coyote.gd
+    proving a jump works within the window and is refused after it expires.
+
+- id: 8
+  title: "Moving platform"
+  body: >
+    Create scenes/platform/platform.gd: an AnimatableBody2D that moves
+    vertically between an exported start_y and end_y at an exported speed,
+    reversing at each end. Add tests/unit/test_platform.gd proving it reverses
+    at a bound.
+
+- id: 9
+  title: "Sound effect hooks"
+  body: >
+    Add an AudioStreamPlayer child named JumpSound to the player IN CODE: in
+    scenes/player/player.gd _ready(), create it if absent, and call .play() on
+    jump. No audio file needed. Add tests/unit/test_sound_hooks.gd proving the
+    node exists after _ready() and that jumping calls play (check
+    JumpSound.playing or use a spy).
+
+- id: 10
+  title: "Extract game config autoload"
+  body: >
+    Create scripts/game_config.gd holding shared constants: GRAVITY,
+    PLAYER_SPEED, JUMP_VELOCITY (use the current values from player.gd).
+    Refactor scenes/player/player.gd to read from a GameConfig instance or
+    the script's constants instead of local literals. Behavior must be
+    identical; all existing tests must still pass. Add
+    tests/unit/test_game_config.gd asserting the constants exist and match
+    the values player.gd uses.

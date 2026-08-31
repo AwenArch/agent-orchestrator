@@ -44,7 +44,8 @@ def run(issue: int):
     rprint(f"[green]Plan:[/green] {plan.summary}")
 
     # ---- CODE / VALIDATE LOOP ----
-    context = rt.read_files(workdir, plan.files_to_change)
+    EXEMPLARS = ["scenes/player/player.gd", "tests/unit/test_player.gd"]
+    context = rt.read_files(workdir, sorted(set(plan.files_to_change + EXEMPLARS)))
     feedback_block = ""
     ok, log = False, ""
     for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -57,7 +58,12 @@ def run(issue: int):
                          plan=plan.model_dump_json(indent=2),
                          files=context, feedback_block=feedback_block),
             schema=CodeOut)
-        written = rt.apply(workdir, code.files)
+        in_scope = set(plan.files_to_change + plan.files_to_create)
+        scoped_files = [f for f in code.files if f.path in in_scope]
+        dropped = [f.path for f in code.files if f.path not in in_scope]
+        if dropped:
+            rprint(f"[yellow]Ignoring files outside plan scope: {dropped}[/yellow]")
+        written = rt.apply(workdir, scoped_files)
         if not written:
             feedback_block = ("Your previous attempt FAILED: every file path "
                               "was outside the allowed directories "
@@ -71,8 +77,9 @@ def run(issue: int):
                           "The errors were:\n" + log +
                           "\nFix these exact errors. Do not change anything "
                           "unrelated.")
-        context = rt.read_files(workdir,
-                                sorted(set(plan.files_to_change + written)))
+        context = rt.read_files(
+            workdir,
+            sorted(set(plan.files_to_change + written + EXEMPLARS)))
 
     if not ok:
         task.add_to_labels("agent:needs-human")

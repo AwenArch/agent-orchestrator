@@ -79,6 +79,11 @@ def main(only: str = typer.Option("", help="comma-separated task ids"),
                 cwd=ROOT, capture_output=True, text=True, timeout=3600)
             wall = round(time.time() - t0)
             passed = r.returncode == 0
+            if not passed:
+                log_dir = ROOT / "runs" / str(issue.number)
+                log_dir.mkdir(parents=True, exist_ok=True)
+                (log_dir / "bench-subprocess.log").write_text(
+                    "STDOUT:\n" + r.stdout + "\nSTDERR:\n" + r.stderr)
             pt, ot = _tokens(issue.number)
             w.writerow({"ts": dt.datetime.now().isoformat(timespec="seconds"),
                         "label": label, "model": model, "task_id": t["id"],

@@ -1,0 +1,14 @@
+endpoints:
+  local:
+    url: http://localhost:11434
+    model: qwen2.5-coder:14b   # swap per bench run
+routing:
+  planner: [local]
+  coder: [local]
+options:
+  temperature: 0.2
+  num_ctx: 16384
+github:
+  repo: AwenArch/zac-godot-sandbox   # <-- EDIT: your GitHub username
+  keychain_account: zac
+  keychain_service: agent-gh-pat

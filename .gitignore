@@ -1,0 +1,4 @@
+smoke_*.py
+runs/
+work/
+__pycache__/

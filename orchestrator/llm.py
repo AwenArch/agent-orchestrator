@@ -54,4 +54,4 @@ def _trace(task_id, step, attempt, ep, msgs, text, secs, raw) -> None:
         "out_tokens": raw.get("eval_count"),
         "prompt_hash": hashlib.sha1(msgs[0]["content"].encode()).hexdigest()[:8],
         "messages": msgs, "response": text,
-        "thinking": r["message"].get("thinking", "")}, indent=1))
+        "thinking": raw["message"].get("thinking", "")}, indent=1))

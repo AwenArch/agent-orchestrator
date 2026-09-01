@@ -19,6 +19,7 @@ def call(role: str, task_id: str, step: str, system: str, user: str,
         t0 = time.time()
         r = client.chat(model=ep["model"], messages=msgs,
                         format=schema.model_json_schema(),
+                        think=False,
                         options=CFG["options"])
         text = r["message"]["content"]
         _trace(task_id, step, attempt, ep, msgs, text, time.time() - t0, r)
@@ -52,4 +53,5 @@ def _trace(task_id, step, attempt, ep, msgs, text, secs, raw) -> None:
         "prompt_tokens": raw.get("prompt_eval_count"),
         "out_tokens": raw.get("eval_count"),
         "prompt_hash": hashlib.sha1(msgs[0]["content"].encode()).hexdigest()[:8],
-        "messages": msgs, "response": text}, indent=1))
+        "messages": msgs, "response": text,
+        "thinking": r["message"].get("thinking", "")}, indent=1))

@@ -277,6 +277,52 @@ GitHub janitorial work.
 
 ---
 
+## Finding 10 — dense-vs-MoE architecture, not file size, is what actually decides speed on this machine
+
+After 0b's fixes landed, ran the same task (double-jump) on all three models
+tried against this project, under identical conditions (same conventions,
+same 3-attempt budget, same calibrated gate):
+
+| Model | Architecture | File size | CPU/GPU split | Task 1 time | vs. 14B |
+|---|---|---|---|---|---|
+| qwen2.5-coder:14b | dense | ~9GB | full GPU | 130s (2.2 min) | 1.0x |
+| qwen3.6:35b-a3b-coding | MoE, 3B active | ~22GB | 31%/69% | 736s (12.3 min) | 5.7x |
+| qwen3.8:27b | dense | ~18GB | 22%/78% | 3410s (56.8 min) | **26.2x** |
+
+The naive expectation going in was that the 27B — smaller file, better
+memory-residency percentage — would land somewhere *between* the 14B and the
+35B on speed. It was instead by far the slowest of the three, taking over 4x
+longer than the 22GB MoE model despite fitting more cleanly in memory.
+
+**Why:** a Mixture-of-Experts model like the 35B-A3B only activates ~3B
+parameters per generated token, regardless of the model's total size on
+disk. A dense model like the 27B activates every one of its 27B parameters
+on every token, full stop. The CPU/GPU split percentage (Finding
+"memory pressure," night one) tells you about *memory placement* — whether
+the weights sit in fast GPU-accessible memory or spill to slower CPU
+execution. It says nothing about *per-token compute cost*, which for a
+dense model scales directly with parameter count no matter where those
+parameters live. A dense 27B doing full-precision math on all 27B
+parameters per token will lose to a MoE model doing math on 3B parameters
+per token, even when the MoE model has a measurably worse memory split.
+
+**What this changes about the hardware conversation:** the fix isn't simply
+"a machine with more RAM" — it's specifically **a machine with enough RAM to
+run an MoE model at full GPU residency.** A larger dense model doesn't get
+you there; it gets you the same speed problem in a different shape, as this
+table now shows directly rather than hypothetically. This is what points at
+something like Qwen3-Coder-Next (80B total / 3B active, ~46-49GB at Q4) as
+the actual target class for a future box, not "whatever the biggest model
+that fits is."
+
+**Lesson:** two numbers that look like they should predict speed — file
+size and memory-residency percentage — turned out to be poor proxies for
+the number that actually mattered (active parameters per token). Worth
+checking a model's architecture (dense vs. MoE, and its active-parameter
+count) before assuming a memory-fit metric tells the whole story.
+
+---
+
 ## Open items
 
 - [x] First-error-block log filtering (Finding 5) — done in 0b, verified

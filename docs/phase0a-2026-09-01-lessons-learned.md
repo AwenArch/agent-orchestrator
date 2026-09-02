@@ -1,9 +1,10 @@
-# Phase 0a — Lessons Learned (first benchmark night)
+# Phase 0a — Lessons Learned (benchmark night + 0b follow-up)
 
-One session, start to finish: built the orchestrator skeleton, ran the first
-real issue end-to-end, then spent most of the night trying to get a trustworthy
+Night one: built the orchestrator skeleton, ran the first real issue
+end-to-end, then spent most of the night trying to get a trustworthy
 benchmark number out of two models. The number mattered less than what broke
-along the way — this is the record of that.
+along the way. Day two: fixed the three harness gaps that night one's traces
+had surfaced, and verified each one against a real failure before moving on.
 
 ---
 
@@ -132,6 +133,38 @@ patch fixed roughly half the board's failures instantly.
 
 ---
 
+## Finding 4b (0b follow-up) — a guard converts the corruption bug from silent and expensive into fast and diagnosed, but can't fix the underlying limit
+
+Built a `detect_corruption()` check that runs right after `apply()`, before
+the Godot gate: compares each pre-existing file's comment-line count and
+overall size against its original (pre-attempt) content, and bounces a
+specific, targeted correction back to the model if either dropped
+suspiciously — skipping the 10–30s Godot validation run entirely, since a
+file already known to be corrupted has no chance of passing it.
+
+Verified two ways: offline against a synthetic repro of the exact Finding 4
+pattern (instant, no model call needed), and live during a real bench run,
+where it fired on **two consecutive attempts of the same task** — the model
+was told explicitly, in plain language, exactly what it had broken and to
+re-check character-for-character, and corrupted the same file the same way
+immediately after.
+
+**Lesson:** the guard is doing its job — a cascade failure that used to burn
+a full Godot run and produce a confusing secondary error now gets caught in
+milliseconds with an accurate diagnosis. But watching it fire twice in a row
+after explicit correction reframes Finding 3 slightly: this isn't only a
+"model doesn't know the rule" problem (fixable with a conventions line) or
+even purely an "ignores a rule it was already given" problem (Finding 3) —
+for whole-file rewrites specifically, it looks like a **transcription-
+fidelity ceiling**: reliably reproducing ~30 unchanged lines of a file
+perfectly, twice, under pressure, appears to be above this model's
+reliability floor, independent of whether it understands what went wrong.
+A guard can catch this fast; only a stronger model or a switch to diff-based
+edits (once a model is strong enough to produce reliable diffs) actually
+fixes it.
+
+---
+
 ## Finding 5 — log-tail truncation blinded the retry loop to the actual root cause
 
 `validate.sh`'s output was fed back to the model as its own error-repair
@@ -244,21 +277,24 @@ GitHub janitorial work.
 
 ---
 
-## Open items carried into 0b / next session
+## Open items
 
-- [ ] First-error-block log filtering (Finding 5) — likely the single
-      highest-leverage remaining harness fix.
-- [ ] Structural guard against transcription corruption: reject a rewrite of
-      an existing file whose comment lines changed or line count shrank
-      unexpectedly, bounce it back as feedback instead of applying it.
-- [ ] `try/finally` cleanup in `bench.py` for interrupted runs.
+- [x] First-error-block log filtering (Finding 5) — done in 0b, verified
+      against a real cascading log via an isolated repro.
+- [x] Structural guard against transcription corruption (Finding 4b) — done
+      in 0b, verified offline and live (fired correctly on a real bench run).
+- [x] Cleanup-on-interruption in `bench.py` — done in 0b, verified live with
+      an actual Ctrl+C mid-task; zero manual GitHub cleanup needed afterward
+      for the first time all project.
 - [ ] Deliberate A/B of `think=True` vs `think=False` on the same task set,
       to settle whether thinking mode was trading quality for speed.
 - [ ] A finished 10/10 run for `qwen3.6:35b-a3b-coding` once a machine with
-      enough RAM for full GPU residency is available — tonight's partial
+      enough RAM for full GPU residency is available — night one's partial
       run is suggestive, not conclusive, on raw capability.
-- [ ] Re-run the frozen 14B bench once more, unchanged, as the final
-      recorded baseline number for the eventual writeup.
+- [ ] Re-run the frozen 14B bench with all three 0b fixes live, as the
+      final recorded baseline number for the eventual writeup — the
+      corruption guard alone may materially change the pass rate, since it
+      was implicated in roughly half of night one's failures.
 
 ---
 

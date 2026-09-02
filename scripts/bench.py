@@ -6,9 +6,8 @@ Usage:
   uv run python scripts/bench.py --only 3,7      # subset
   uv run python scripts/bench.py --label mylabel # tag rows in the CSV
 
-Results append to bench/results.csv. One row per task per run.
-The model column is read from config/models.yaml at start - edit that file
-between runs to bench a different model.
+Ctrl+C or a timeout during a task cleans up that task's issue/branch before
+exiting, then stops (does not continue to the next task).
 """
 import csv
 import datetime as dt
@@ -52,6 +51,26 @@ def _iterations(issue_n: int) -> int:
     return len(glob.glob(str(RUNS / str(issue_n) / "code-*-0.json")))
 
 
+def _cleanup(gh, issue_number: int) -> None:
+    """Close any PR, delete the branch, close the issue. Never raises -
+    called on both normal completion and interruption, so it has to be
+    safe to call even if some of these were never created."""
+    try:
+        for pr in gh.get_pulls(state="open",
+                               head=f"{gh.owner.login}:agent/{issue_number}"):
+            pr.edit(state="closed")
+    except Exception:
+        pass
+    try:
+        gh.get_git_ref(f"heads/agent/{issue_number}").delete()
+    except Exception:
+        pass
+    try:
+        gh.get_issue(issue_number).edit(state="closed")
+    except Exception:
+        pass
+
+
 @app.command()
 def main(only: str = typer.Option("", help="comma-separated task ids"),
          label: str = typer.Option("", help="free-text tag for CSV rows")):
@@ -72,40 +91,51 @@ def main(only: str = typer.Option("", help="comma-separated task ids"),
             issue = gh.create_issue(
                 title=f"[bench] {t['title']}",
                 body=t["body"] + "\n\n_benchmark task - do not merge_")
+
             t0 = time.time()
-            r = subprocess.run(
-                ["uv", "run", "python", "-m", "orchestrator.main",
-                 str(issue.number)],
-                cwd=ROOT, capture_output=True, text=True, timeout=3600)
+            r = None
+            interrupted = False
+            note = ""
+            try:
+                r = subprocess.run(
+                    ["uv", "run", "python", "-m", "orchestrator.main",
+                     str(issue.number)],
+                    cwd=ROOT, capture_output=True, text=True, timeout=3600)
+            except KeyboardInterrupt:
+                interrupted = True
+                note = "INTERRUPTED (Ctrl+C)"
+            except subprocess.TimeoutExpired:
+                interrupted = True
+                note = "TIMEOUT (3600s)"
+
             wall = round(time.time() - t0)
-            passed = r.returncode == 0
-            if not passed:
+            passed = bool(r) and r.returncode == 0
+            if r is not None and not passed:
                 log_dir = ROOT / "runs" / str(issue.number)
                 log_dir.mkdir(parents=True, exist_ok=True)
                 (log_dir / "bench-subprocess.log").write_text(
                     "STDOUT:\n" + r.stdout + "\nSTDERR:\n" + r.stderr)
+
             pt, ot = _tokens(issue.number)
             w.writerow({"ts": dt.datetime.now().isoformat(timespec="seconds"),
                         "label": label, "model": model, "task_id": t["id"],
                         "title": t["title"], "issue": issue.number,
                         "passed": passed, "iterations": _iterations(issue.number),
                         "wall_secs": wall, "prompt_tokens": pt,
-                        "out_tokens": ot, "notes": ""})
+                        "out_tokens": ot, "notes": note})
             fh.flush()
-            print(f"    -> {'PASS' if passed else 'FAIL'} "
-                  f"({_iterations(issue.number)} iter, {wall}s)")
+            status = note if interrupted else ("PASS" if passed else "FAIL")
+            print(f"    -> {status} ({_iterations(issue.number)} iter, {wall}s)")
 
-            # cleanup: close PR if any, delete branch, close issue
-            try:
-                for pr in gh.get_pulls(state="open",
-                                       head=f"{gh.owner.login}:agent/{issue.number}"):
-                    pr.edit(state="closed")
-                gh.get_git_ref(f"heads/agent/{issue.number}").delete()
-            except Exception:
-                pass
-            issue.edit(state="closed")
+            # Cleanup ALWAYS runs now, interrupted or not.
+            _cleanup(gh, issue.number)
 
-    # summary
+            if interrupted:
+                print(f"\nStopped ({note}). Issue #{issue.number} and its "
+                      "branch were cleaned up. Remaining tasks were NOT run - "
+                      "resume with --only <remaining ids>.")
+                raise typer.Exit(1)
+
     rows = [x for x in csv.DictReader(CSV.open())
             if x["model"] == model and x["label"] == label]
     latest = {}

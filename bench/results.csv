@@ -39,3 +39,13 @@ ts,label,model,task_id,title,issue,passed,iterations,wall_secs,prompt_tokens,out
 2026-09-02T10:40:14,guard-test,qwen2.5-coder:14b,1,Add double-jump to the player,45,False,3,130,6090,2458,
 2026-09-02T12:40:45,qwen27b-v1,qwen3.8:27b,1,Add double-jump to the player,46,False,3,3410,21384,17469,
 2026-09-02T12:47:51,qwen27b-v1,qwen3.8:27b,2,Coin pickup scene with score signal,47,False,2,422,5161,1468,INTERRUPTED (Ctrl+C)
+2026-09-02T14:59:16,conv-v5-final,qwen2.5-coder:14b,1,Add double-jump to the player,48,False,3,140,6057,2383,
+2026-09-02T15:01:18,conv-v5-final,qwen2.5-coder:14b,2,Coin pickup scene with score signal,49,False,3,118,6673,1985,
+2026-09-02T15:03:13,conv-v5-final,qwen2.5-coder:14b,3,Score autoload with HUD-ready API,50,False,3,111,7371,1791,
+2026-09-02T15:04:44,conv-v5-final,qwen2.5-coder:14b,4,Patrolling enemy between two points,51,False,3,87,6862,1294,
+2026-09-02T15:06:54,conv-v5-final,qwen2.5-coder:14b,5,Player death and respawn on enemy contact,52,False,3,126,5808,2468,
+2026-09-02T15:10:50,conv-v5-final,qwen2.5-coder:14b,6,Pause manager,53,False,3,232,9514,4185,
+2026-09-02T15:15:13,conv-v5-final,qwen2.5-coder:14b,7,Coyote time for jumps,54,False,3,259,6279,3191,
+2026-09-02T15:17:01,conv-v5-final,qwen2.5-coder:14b,8,Moving platform,55,False,3,104,6573,1634,
+2026-09-02T15:19:18,conv-v5-final,qwen2.5-coder:14b,9,Sound effect hooks,56,False,3,134,5745,2753,
+2026-09-02T15:21:10,conv-v5-final,qwen2.5-coder:14b,10,Extract game config autoload,57,False,3,108,5393,2205,

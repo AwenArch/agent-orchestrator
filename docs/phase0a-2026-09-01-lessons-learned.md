@@ -323,6 +323,27 @@ count) before assuming a memory-fit metric tells the whole story.
 
 ---
 
+## Finding 11 — the fully-instrumented 14B baseline: 0/10, and that's now a trustworthy number
+
+Re-ran the frozen 10-task bench on `qwen2.5-coder:14b` with all three 0b
+fixes live simultaneously for the first time (log filtering, corruption
+guard, interrupt-safe cleanup) — no manual intervention anywhere, clean
+finish in well under an hour, every task in the 87–259s range.
+
+Result: **0/10**, same headline number as night one's contaminated first
+attempt. The number didn't move. What changed is confidence in it: night
+one's 0/10 turned out to be an artifact of two gate bugs; this one ran
+through an instrument that's since been calibrated in both directions and
+caught (or wasn't undermined by) every known failure class along the way.
+
+**Lesson:** this is the actual, final Phase 0a answer for this model on
+this hardware — not "the harness might still be lying," but "the model's
+3-attempt unattended ceiling on this task set, measured cleanly, is zero."
+A number that survives a full instrumentation pass without moving is worth
+more than one that looked better before the gate was trusted.
+
+---
+
 ## Open items
 
 - [x] First-error-block log filtering (Finding 5) — done in 0b, verified
@@ -332,15 +353,13 @@ count) before assuming a memory-fit metric tells the whole story.
 - [x] Cleanup-on-interruption in `bench.py` — done in 0b, verified live with
       an actual Ctrl+C mid-task; zero manual GitHub cleanup needed afterward
       for the first time all project.
+- [x] Re-run the frozen 14B bench with all three 0b fixes live (Finding 11)
+      — done; 0/10, confirming the number is real and not a harness artifact.
 - [ ] Deliberate A/B of `think=True` vs `think=False` on the same task set,
       to settle whether thinking mode was trading quality for speed.
 - [ ] A finished 10/10 run for `qwen3.6:35b-a3b-coding` once a machine with
       enough RAM for full GPU residency is available — night one's partial
       run is suggestive, not conclusive, on raw capability.
-- [ ] Re-run the frozen 14B bench with all three 0b fixes live, as the
-      final recorded baseline number for the eventual writeup — the
-      corruption guard alone may materially change the pass rate, since it
-      was implicated in roughly half of night one's failures.
 
 ---
 

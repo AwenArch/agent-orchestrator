@@ -194,8 +194,77 @@ architected on paper.
 
 ---
 
+## Finding 17 — a green PR is not proof of anything; a silent scope-filter bug shipped zero test coverage past every existing safeguard
+
+The daemon's first real feature request (a HUD coin counter) produced a
+`PR ready` message on attempt 1 with no errors, no corruption-guard trip, no
+retry. It looked exactly like a clean success — until the PR's file list
+was checked by hand: **one file changed, `scenes/main/main.tscn`. No test.
+No new script. Nothing the pipeline's own "no code passes unverified"
+guarantee was supposed to prevent.**
+
+Root cause, found by reading the trace: the planner named
+`tests/unit/test_coin_counter.gd` as `test_file`, but never listed it in
+`files_to_change` or `files_to_create`. The scope filter — built weeks
+earlier specifically to stop the model from corrupting files outside a
+task's plan (Finding 4) — correctly dropped the test file as "outside plan
+scope," per its own logic. The gate then validated only the pre-existing
+suite, which passed trivially because nothing new existed to break it. A
+technically-correct component (the scope filter) and a technically-correct
+gate (validate.sh) combined to produce a false "all clear."
+
+**First fix (necessary but incomplete):** added a check that bounces the
+task back for a retry if `plan.test_file` never lands in `written`. Applied
+this, watched three attempts fail identically with the exact same "wasn't
+written" message every time — and that repetition was itself the signal
+that this fix only *detected* the problem, it couldn't *solve* it. The
+scope allowlist was computed once from the plan and never revisited; no
+number of coder retries could put the test file in scope if the plan never
+listed it there to begin with. The bug wasn't in what the model wrote (it
+wrote the test correctly every single attempt) - it was in a stale filter
+checking against a plan that was never going to change.
+
+**Real fix:** always include `plan.test_file` in the scope allowlist,
+regardless of whether the planner also remembered to list it elsewhere -
+it's a schema-required field, so it should always be writable. One line.
+The detection guard from the first fix stays as a backstop for the case
+where `test_file` itself is missing or malformed, but the actual save was
+making the filter stop contradicting the schema it was supposed to trust.
+
+**Lesson, in two parts:**
+1. **A clean run through the gate is not the same as a verified result.**
+   The only thing that caught this was manually reading a PR's diff instead
+   of trusting its green status - exactly the discipline the whole project
+   has run on since 0a's first false 0/10, applied to a new place (a
+   daemon's own success message) where it hadn't yet been tested.
+2. **When a bug repeats identically across every retry, stop retrying and
+   ask what's frozen.** The coder was never going to fix this because the
+   coder wasn't broken - the plan-derived scope filter was, and nothing
+   about retrying the *coder* could touch that. The fix belonged one layer
+   up from where the symptom appeared, same shape as Finding 5's log-tail
+   blindness: read where the retry loop's *inputs* come from before
+   assuming the model just needs another chance.
+
+**Bonus finding, folded in from the same debugging pass:** the eventual
+real failure on this task (once the scope bug was fixed) was a `:=` type-
+inference parse error on an ambiguous right-hand side
+(`load(...).instantiate()`), and it **crashed** the gdUnit4 runner rather
+than failing cleanly - the same abnormal-exit signature as Finding 2's bare-
+class-reference crash. That generalizes Finding 2: it now looks like *any*
+parse error during test discovery crashes this Godot/gdUnit4 combination,
+not narrowly bare class references. Added to CONVENTIONS.md: prefer
+explicit types over `:=` inference whenever the right-hand side's type
+isn't statically obvious.
+
+---
+
 ## Open items carried forward
 
+- [x] `/task feedback` and `/task retry` exercised end-to-end on a real
+      needs-human task (#60) — confirmed working: feedback comment posted,
+      re-queued, planner incorporated it, produced a different (better)
+      approach that avoided the known player.gd corruption ceiling entirely.
+      Uncovered Finding 17 in the process.
 - [ ] Diff-based editing instead of whole-file rewrites — the actual fix
       for the edit-vs-create corruption split (Finding 11/14), not a
       Reviewer agent. Biggest remaining lever on pass rate.
@@ -205,11 +274,10 @@ architected on paper.
 - [ ] No launchd plist yet — the daemon has only been run interactively in
       a foreground terminal. Needed before "always-on" is real rather than
       "on while I'm at my desk with the terminal open."
-- [ ] `/task feedback` and `/task retry` are implemented and wired into
-      `run_task`'s prompt (prior feedback comments are read back in) but
-      not yet exercised end-to-end on a real needs-human task — worth
-      doing deliberately: file feedback on #60, watch it get picked back
-      up and re-attempted with that context.
 - [ ] Concurrency is still hard-coded to one task at a time (by design, per
       the architecture doc's single-writer rule) — fine for now, revisit
       only if queue depth ever becomes the actual bottleneck.
+- [ ] Confirm whether ANY parse error during gdUnit4 test discovery crashes
+      the runner (Finding 17's generalization of Finding 2), or just the
+      two specific cases seen so far (bare class refs, ambiguous `:=`
+      inference). Worth a deliberate repro sweep if this keeps recurring.

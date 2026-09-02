@@ -81,7 +81,11 @@ def run_task(issue_number: int) -> dict:
                          files=context, feedback_block=feedback_block),
             schema=CodeOut)
 
-        in_scope = set(plan.files_to_change + plan.files_to_create)
+        # plan.test_file is schema-required but planners sometimes forget
+        # to also list it in files_to_change/files_to_create - always
+        # allow it through regardless, or a self-inconsistent plan makes
+        # the task unfixable across every retry (issue 60/PR 61-62).
+        in_scope = set(plan.files_to_change + plan.files_to_create + [plan.test_file])
         scoped_files = [f for f in code.files if f.path in in_scope]
         dropped = [f.path for f in code.files if f.path not in in_scope]
         if dropped:

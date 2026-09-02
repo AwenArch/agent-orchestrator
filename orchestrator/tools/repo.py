@@ -17,7 +17,8 @@ def _git(workdir: Path, *args: str) -> str:
     r = subprocess.run(["git", *args], cwd=workdir,
                        capture_output=True, text=True, timeout=120)
     if r.returncode != 0:
-        raise RuntimeError(f"git {' '.join(args)} failed:\n{r.stderr}")
+        detail = (r.stderr or "") + (r.stdout or "")
+        raise RuntimeError(f"git {' '.join(args)} failed:\n{detail.strip()}")
     return r.stdout
 
 

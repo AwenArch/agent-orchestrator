@@ -1,4 +1,4 @@
-"""The conductor. Usage:  uv run python -m orchestrator.main run --issue 1"""
+"""The conductor. Usage:  uv run python -m orchestrator.main 1"""
 import logging
 
 import typer
@@ -15,6 +15,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 app = typer.Typer()
 
 MAX_ATTEMPTS = 3
+EXEMPLARS = ["scenes/player/player.gd", "tests/unit/test_player.gd"]
 
 
 def _prompt(name: str, **kw) -> str:
@@ -44,8 +45,8 @@ def run(issue: int):
     rprint(f"[green]Plan:[/green] {plan.summary}")
 
     # ---- CODE / VALIDATE LOOP ----
-    EXEMPLARS = ["scenes/player/player.gd", "tests/unit/test_player.gd"]
     context = rt.read_files(workdir, sorted(set(plan.files_to_change + EXEMPLARS)))
+    original_files = rt.read_files_dict(workdir, plan.files_to_change)
     feedback_block = ""
     ok, log = False, ""
     for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -58,6 +59,7 @@ def run(issue: int):
                          plan=plan.model_dump_json(indent=2),
                          files=context, feedback_block=feedback_block),
             schema=CodeOut)
+
         in_scope = set(plan.files_to_change + plan.files_to_create)
         scoped_files = [f for f in code.files if f.path in in_scope]
         dropped = [f.path for f in code.files if f.path not in in_scope]
@@ -69,6 +71,21 @@ def run(issue: int):
                               "was outside the allowed directories "
                               f"{rt.ALLOWED}. Use correct paths.")
             continue
+
+        corruption = rt.detect_corruption(original_files, workdir, written)
+        if corruption:
+            rprint(f"[red]Corruption guard tripped:[/red]\n{corruption}")
+            feedback_block = ("Your previous attempt corrupted existing "
+                              "content while rewriting file(s). Details:\n"
+                              + corruption +
+                              "\nRewrite the affected file(s) again, copying "
+                              "every existing line EXACTLY except for the "
+                              "specific change requested. Do not paraphrase "
+                              "or shorten comments.")
+            context = rt.read_files(workdir,
+                                    sorted(set(plan.files_to_change + written + EXEMPLARS)))
+            continue  # skip the Godot gate - already known broken
+
         ok, log = godot.validate(workdir, written)
         if ok:
             break
@@ -77,9 +94,8 @@ def run(issue: int):
                           "The errors were:\n" + log +
                           "\nFix these exact errors. Do not change anything "
                           "unrelated.")
-        context = rt.read_files(
-            workdir,
-            sorted(set(plan.files_to_change + written + EXEMPLARS)))
+        context = rt.read_files(workdir,
+                                sorted(set(plan.files_to_change + written + EXEMPLARS)))
 
     if not ok:
         task.add_to_labels("agent:needs-human")

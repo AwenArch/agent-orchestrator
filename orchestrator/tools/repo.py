@@ -72,3 +72,51 @@ def read_files(workdir: Path, paths: list[str]) -> str:
         else:
             chunks.append(f"--- {p} --- (does not exist yet)")
     return "\n\n".join(chunks) if chunks else "(no existing files relevant)"
+
+
+def read_files_dict(workdir: Path, paths: list[str]) -> dict[str, str]:
+    """Like read_files, but returns {path: content} for files that exist.
+    Used to snapshot pre-rewrite content for the corruption guard."""
+    return {p: (workdir / p).read_text()
+            for p in paths if (workdir / p).is_file()}
+
+
+def detect_corruption(before: dict[str, str], workdir: Path,
+                      written: list[str]) -> str | None:
+    """Guard against the docstring/comment-corruption transcription bug seen
+    repeatedly in bench night 1: rewriting an existing file and losing
+    comment lines, usually a copy-fidelity failure on a long file (e.g. a
+    '##' continuation line silently loses its prefix and becomes bare code).
+
+    Compares against the ORIGINAL pre-attempt content (captured once after
+    checkout), not the previous attempt's output, so a still-broken file
+    keeps getting flagged across retries rather than being judged against
+    its own already-corrupted state.
+
+    Soft signal, not a hard block: returns a feedback string to bounce back
+    to the model for a retry, or None if nothing looks wrong. Only checks
+    files that existed before this attempt (new files have nothing to
+    compare against).
+    """
+    problems = []
+    for path in written:
+        if path not in before:
+            continue
+        old_lines = before[path].splitlines()
+        new_lines = (workdir / path).read_text().splitlines()
+
+        old_comments = sum(1 for l in old_lines if l.strip().startswith("#"))
+        new_comments = sum(1 for l in new_lines if l.strip().startswith("#"))
+        if old_comments > 0 and new_comments < old_comments:
+            problems.append(
+                f"{path}: had {old_comments} comment lines, now has "
+                f"{new_comments}. A comment was likely mangled while "
+                f"rewriting (e.g. a '##' continuation line lost its prefix "
+                f"and became bare code, which will fail to parse). "
+                f"Re-check every comment line character-for-character.")
+        elif len(old_lines) >= 10 and len(new_lines) < len(old_lines) * 0.5:
+            problems.append(
+                f"{path}: shrank from {len(old_lines)} to {len(new_lines)} "
+                f"lines. If this wasn't an intentional refactor removing "
+                f"code, you likely dropped content while rewriting.")
+    return "\n".join(problems) if problems else None

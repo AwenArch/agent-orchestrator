@@ -342,6 +342,66 @@ real structural bug got fixed.
 
 ---
 
+## Finding 19 — the Reviewer agent (formal 0b), built and tested honestly, then correctly turned off
+
+Diff-based editing (Finding 18) removed most of the corruption risk that
+originally justified deprioritizing a Reviewer agent - what remained were
+ordinary logic/capability failures (phantom scenes, missing `add_child()`
+before `get_tree()` use, duplicate declarations), exactly the class of
+mistake a second reading of the actual resulting code should be good at
+catching. Built it: after files are written but before the Godot cycle, a
+reviewer call reads the real current content of every touched file against
+the plan and conventions, approves or rejects with specific issues. A
+rejection skips Godot (cheap) and retries; an approval still goes on to
+real validation - Godot never bypassed, the reviewer only ever adds a
+cheaper pre-filter.
+
+**The bench run itself was methodologically compromised and that's worth
+owning plainly:** it went out with two new variables at once (the reviewer,
+and a MAX_ATTEMPTS bump from 3 to 5) against the last clean baseline,
+breaking the one-variable-per-run discipline this project held to all
+week. That made the raw 0/10 pass rate uninterpretable on its own - so the
+question asked instead was narrower and more honest: is the reviewer's
+*judgment* any good, independent of whether it moved the pass rate?
+
+**The answer, read from the actual rejection text, was no - and the
+evidence is unambiguous.** Issue #93 ("Extract game config autoload" -
+the whole point was moving hardcoded values INTO a GameConfig autoload)
+got reviewed five times:
+- review-1: *"`GameConfig` is not defined - revert to hardcoded `200.0`,
+  `-400.0`, `9.81`"*
+- review-2/3: *"these should NOT be hardcoded - they should read from
+  `GameConfig`"*
+
+The reviewer told the coder to undo the task's own stated goal, then
+reversed itself on the very next attempt - directly counterproductive, not
+merely unhelpful. A separate task (#84) showed a second failure pattern: a
+confidently-stated "unused variable" flag on `gravity`, which is used on
+the very next line of the same function in every version of this file seen
+all week - a plausible false positive stated with the same confidence as
+the genuinely correct catches sitting right next to it (an indentation
+error, a wrong gdUnit assertion) in the same review.
+
+**Disabled by default**, reasoning documented inline in `config/
+models.yaml` rather than silently commented out. The code stays - schema,
+prompt, wiring are all real, working infrastructure, not wasted effort.
+
+**Lesson:** this is the same-class-review risk that motivated skipping 0b
+in the first place, now confirmed with hard evidence instead of inferred
+from first principles. A reviewer's rejections read exactly as confident
+and well-formatted whether they're right or wrong - the self-contradiction
+between review-1 and review-2 on #93 wasn't hedged or uncertain either
+time, it was two opposite, equally confident verdicts on the same code.
+That's the real danger of same-class review: not that it's obviously
+unreliable, but that unreliable and reliable output are indistinguishable
+by tone alone, which is exactly why this needed a bench run and a
+transcript read rather than a judgment call from the architecture. A
+plausible next step, not attempted tonight: route review through a
+different or stronger model than the coder, since a second opinion is
+only worth something if it's actually independent.
+
+---
+
 ## Open items carried forward
 
 - [x] `/task feedback` and `/task retry` exercised end-to-end on a real
@@ -370,5 +430,11 @@ real structural bug got fixed.
       the runner (Finding 17's generalization of Finding 2), or just the
       two specific cases seen so far (bare class refs, ambiguous `:=`
       inference). Worth a deliberate repro sweep if this keeps recurring.
+- [ ] Reviewer agent (Finding 19) — disabled by default; worth one clean
+      re-test with a stronger/different review model than the coder before
+      concluding the whole approach is dead, since same-class review was
+      the specific thing that failed, not necessarily review in general.
+      Must run as a single isolated variable next time, not bundled with
+      other changes.
 
 ---

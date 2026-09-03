@@ -10,5 +10,7 @@ dependencies = [
     "pygithub>=2.10.0",
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
+    "slack-bolt>=1.30.0",
+    "slack-sdk>=3.44.0",
     "typer>=0.27.2",
 ]

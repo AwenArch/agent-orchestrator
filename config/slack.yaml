@@ -1,0 +1,13 @@
+# Channel ID where the daemon posts proactive status updates
+# (task started / PR ready / needs-human / crash).
+# Find it: right-click the channel in Slack -> View channel details ->
+# Channel ID is at the bottom. Or open the channel in a browser - the URL
+# contains /CXXXXXXXXXX/, that's the ID.
+channel: "C0BUM9SB3C1"
+
+keychain:
+  account: zac
+  bot_service: agent-slack-bot
+  app_service: agent-slack-app
+
+poll_seconds: 30

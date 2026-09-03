@@ -135,16 +135,20 @@ def run_task(issue_number: int) -> dict:
         # rejection here skips straight to a retry (no Godot run wasted on
         # something a review already flagged); an approval still goes on
         # to the real validation, never treated as sufficient on its own.
-        touched_content = rt.read_files(workdir, touched)
-        review = llm.call(
-            "reviewer", str(issue_number), f"review-{attempt}",
-            system="You are a precise, conservative code reviewer. Reply "
-                   "ONLY with JSON matching the schema.",
-            user=_prompt("reviewer", conventions=conventions,
-                         plan=plan.model_dump_json(indent=2),
-                         touched_files=touched_content),
-            schema=ReviewResult)
-        if not review.approve:
+        from orchestrator.config import CFG
+        reviewer_enabled = "reviewer" in CFG.get("routing", {})
+        review = None
+        if reviewer_enabled:
+            touched_content = rt.read_files(workdir, touched)
+            review = llm.call(
+                "reviewer", str(issue_number), f"review-{attempt}",
+                system="You are a precise, conservative code reviewer. Reply "
+                       "ONLY with JSON matching the schema.",
+                user=_prompt("reviewer", conventions=conventions,
+                             plan=plan.model_dump_json(indent=2),
+                             touched_files=touched_content),
+                schema=ReviewResult)
+        if review is not None and not review.approve:
             rprint("[red]Reviewer rejected:[/red]\n" +
                   "\n".join(review.issues))
             feedback_block = (

@@ -5,6 +5,7 @@ endpoints:
 routing:
   planner: [local]
   coder: [local]
+  reviewer: [local]
 options:
   temperature: 0.2
   num_ctx: 16384

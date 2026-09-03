@@ -9,14 +9,16 @@ from rich import print as rprint
 from orchestrator import llm
 from orchestrator.config import ROOT
 from orchestrator.github_client import repo
-from orchestrator.schemas import CodeOut, Plan
+from orchestrator.schemas import CodeOut, Plan, ReviewResult
 from orchestrator.tools import godot
 from orchestrator.tools import repo as rt
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 app = typer.Typer()
 
-MAX_ATTEMPTS = 5  # bumped from 3 - diff-based editing made failed attempts cheap (no Godot run needed when an edit doesn't apply), so a bigger budget costs much less than it used to
+MAX_ATTEMPTS = 5  # bumped from 3 - diff-based editing made failed attempts
+                  # cheap (no Godot run needed when an edit doesn't apply),
+                  # so a bigger budget costs much less than it used to
 EXEMPLARS = ["scenes/player/player.gd", "tests/unit/test_player.gd"]
 STATE_LABELS = ("agent:queued", "agent:running")
 
@@ -80,9 +82,6 @@ def run_task(issue_number: int) -> dict:
                          files=context, feedback_block=feedback_block),
             schema=CodeOut)
 
-        # test_file is schema-required on the Plan but planners sometimes
-        # forget to also list it in files_to_change/files_to_create - allow
-        # it through both scope checks regardless (Finding 17).
         in_scope_new = set(plan.files_to_create + [plan.test_file])
         scoped_new = [f for f in code.new_files if f.path in in_scope_new]
         dropped_new = [f.path for f in code.new_files
@@ -125,6 +124,34 @@ def run_task(issue_number: int) -> dict:
                 "it wasn't among the files you wrote or edited this time. "
                 f"Every response MUST include '{plan.test_file}' - in "
                 "new_files if it's new, or in edits if it already exists.")
+            context = rt.read_files(
+                workdir, sorted(set(plan.files_to_change + touched + EXEMPLARS)))
+            continue
+
+        # --- Reviewer pass: cheap second look before the expensive Godot
+        # cycle. Reads the REAL current content of every touched file
+        # (post-write, post-edit) - not a diff in isolation - since that's
+        # what actually gets tested. Godot remains the real authority: a
+        # rejection here skips straight to a retry (no Godot run wasted on
+        # something a review already flagged); an approval still goes on
+        # to the real validation, never treated as sufficient on its own.
+        touched_content = rt.read_files(workdir, touched)
+        review = llm.call(
+            "reviewer", str(issue_number), f"review-{attempt}",
+            system="You are a precise, conservative code reviewer. Reply "
+                   "ONLY with JSON matching the schema.",
+            user=_prompt("reviewer", conventions=conventions,
+                         plan=plan.model_dump_json(indent=2),
+                         touched_files=touched_content),
+            schema=ReviewResult)
+        if not review.approve:
+            rprint("[red]Reviewer rejected:[/red]\n" +
+                  "\n".join(review.issues))
+            feedback_block = (
+                "The reviewer rejected your last attempt before it even "
+                "reached testing, for these reasons:\n" +
+                "\n".join(f"- {i}" for i in review.issues) +
+                "\nFix these specific issues.")
             context = rt.read_files(
                 workdir, sorted(set(plan.files_to_change + touched + EXEMPLARS)))
             continue

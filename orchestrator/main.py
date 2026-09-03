@@ -45,7 +45,6 @@ def run_task(issue_number: int) -> dict:
     workdir = rt.checkout(issue_number)
     conventions = (workdir / "CONVENTIONS.md").read_text()
 
-    # Pick up anything left via /task feedback since this issue was filed.
     feedback_comments = [
         c.body[len("feedback:"):].strip() for c in task.get_comments()
         if c.body.strip().lower().startswith("feedback:")]
@@ -67,9 +66,9 @@ def run_task(issue_number: int) -> dict:
     rprint(f"[green]Plan:[/green] {plan.summary}")
 
     context = rt.read_files(workdir, sorted(set(plan.files_to_change + EXEMPLARS)))
-    original_files = rt.read_files_dict(workdir, plan.files_to_change)
     feedback_block = ""
     ok, log = False, ""
+
     for attempt in range(1, MAX_ATTEMPTS + 1):
         rprint(f"[bold]Coder attempt {attempt}/{MAX_ATTEMPTS}[/bold]")
         code = llm.call(
@@ -81,59 +80,66 @@ def run_task(issue_number: int) -> dict:
                          files=context, feedback_block=feedback_block),
             schema=CodeOut)
 
-        # plan.test_file is schema-required but planners sometimes forget
-        # to also list it in files_to_change/files_to_create - always
-        # allow it through regardless, or a self-inconsistent plan makes
-        # the task unfixable across every retry (issue 60/PR 61-62).
-        in_scope = set(plan.files_to_change + plan.files_to_create + [plan.test_file])
-        scoped_files = [f for f in code.files if f.path in in_scope]
-        dropped = [f.path for f in code.files if f.path not in in_scope]
+        # test_file is schema-required on the Plan but planners sometimes
+        # forget to also list it in files_to_change/files_to_create - allow
+        # it through both scope checks regardless (Finding 17).
+        in_scope_new = set(plan.files_to_create + [plan.test_file])
+        scoped_new = [f for f in code.new_files if f.path in in_scope_new]
+        dropped_new = [f.path for f in code.new_files
+                       if f.path not in in_scope_new]
+        written_new = rt.apply(workdir, scoped_new)
+
+        in_scope_edit = set(plan.files_to_change + [plan.test_file])
+        scoped_edits = [e for e in code.edits if e.path in in_scope_edit]
+        dropped_edits = [e.path for e in code.edits
+                         if e.path not in in_scope_edit]
+        applied_edits, edit_errors = rt.apply_edits(workdir, scoped_edits)
+
+        touched = written_new + applied_edits
+        dropped = dropped_new + dropped_edits
         if dropped:
             rprint(f"[yellow]Ignoring files outside plan scope: {dropped}[/yellow]")
-        written = rt.apply(workdir, scoped_files)
-        if not written:
-            feedback_block = ("Your previous attempt FAILED: every file path "
-                              "was outside the allowed directories "
-                              f"{rt.ALLOWED}. Use correct paths.")
-            continue
 
-        if plan.test_file not in written:
-            rprint(f"[yellow]Plan named test_file={plan.test_file!r} but it "
-                  "wasn't written - plan/output mismatch.[/yellow]")
+        if edit_errors:
+            rprint("[red]Edit errors:[/red]\n" + "\n".join(edit_errors))
             feedback_block = (
-                f"Your plan named '{plan.test_file}' as the test file, but you "
-                "didn't include it in your file list, or it wasn't in "
-                "files_to_create/files_to_change. Every response MUST include "
-                f"the test file: write full content for '{plan.test_file}' "
-                "this time.")
-            context = rt.read_files(
-                workdir, sorted(set(plan.files_to_change + written + EXEMPLARS)))
+                "Some of your edits FAILED to apply:\n" + "\n".join(edit_errors) +
+                "\nFix the `search` text so it matches the file EXACTLY and "
+                "UNIQUELY - copy it verbatim from the file content shown "
+                "above. Do not rewrite the whole file; only resend the "
+                "failing edit(s), corrected.")
             continue
 
-        corruption = rt.detect_corruption(original_files, workdir, written)
-        if corruption:
-            rprint(f"[red]Corruption guard tripped:[/red]\n{corruption}")
-            feedback_block = ("Your previous attempt corrupted existing "
-                              "content while rewriting file(s). Details:\n"
-                              + corruption +
-                              "\nRewrite the affected file(s) again, copying "
-                              "every existing line EXACTLY except for the "
-                              "specific change requested. Do not paraphrase "
-                              "or shorten comments.")
-            context = rt.read_files(
-                workdir, sorted(set(plan.files_to_change + written + EXEMPLARS)))
+        if not touched:
+            feedback_block = (
+                "Nothing was written or edited. Check that your file paths "
+                f"exactly match the plan: files_to_create={plan.files_to_create}, "
+                f"files_to_change={plan.files_to_change}.")
             continue
 
-        ok, log = godot.validate(workdir, written)
+        if plan.test_file not in touched:
+            rprint(f"[yellow]Plan named test_file={plan.test_file!r} but it "
+                  "wasn't written or edited - plan/output mismatch.[/yellow]")
+            feedback_block = (
+                f"Your plan named '{plan.test_file}' as the test file, but "
+                "it wasn't among the files you wrote or edited this time. "
+                f"Every response MUST include '{plan.test_file}' - in "
+                "new_files if it's new, or in edits if it already exists.")
+            context = rt.read_files(
+                workdir, sorted(set(plan.files_to_change + touched + EXEMPLARS)))
+            continue
+
+        ok, log = godot.validate(workdir, touched)
         if ok:
             break
         rprint("[red]Validation failed; feeding errors back.[/red]")
         feedback_block = ("Your previous attempt FAILED validation. "
                           "The errors were:\n" + log +
-                          "\nFix these exact errors. Do not change anything "
-                          "unrelated.")
+                          "\nFix these exact errors. For existing files, use "
+                          "a small, targeted edit via `edits` - never "
+                          "rewrite the whole file.")
         context = rt.read_files(
-            workdir, sorted(set(plan.files_to_change + written + EXEMPLARS)))
+            workdir, sorted(set(plan.files_to_change + touched + EXEMPLARS)))
 
     if not ok:
         _clear_state_labels(task)

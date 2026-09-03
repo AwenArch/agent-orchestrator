@@ -258,6 +258,90 @@ isn't statically obvious.
 
 ---
 
+## Finding 18 — diff-based editing: built, tested, and it did exactly what it was supposed to do (even though the pass rate stayed 0/10)
+
+The corruption findings (4/4b/11/14/17) all traced to one mechanism: the
+coder rewrote entire existing files, and the 14B couldn't reliably
+transcribe ~30+ unchanged lines while making one change. Replaced whole-
+file rewrites for existing files with a search/replace interface instead -
+the model copies a short exact snippet to find and writes what replaces
+it, never touching the rest of the file. New files (0% corruption rate per
+Finding 11) kept the old full-content path unchanged.
+
+**First bench (`diffedit-v1`, 0/10):** looked like no progress at all until
+the failures were classified individually - 8 of 10 tasks never reached
+Godot; they died purely on `search` text not matching the file. Read one
+real trace instead of assuming: the model's *wording* was character-
+perfect, but it consistently miscounted leading tabs while JSON-escaping
+them as `\t` inside a structured output field - missing a tab entirely on
+one line, one short on the next. Not hallucination, not paraphrasing - a
+narrow, specific, fixable problem.
+
+**The fix, iterated live rather than shipped on the first idea:**
+1. First attempt: a whitespace-tolerant fallback matcher (ignore leading/
+   trailing whitespace when the exact match fails), reapplying using the
+   *file's* real indentation. Verified against the actual captured
+   failure from run #63 before it ever touched a real bench task - and a
+   second, hand-written test for a multi-line insertion immediately
+   exposed a bug in the first version: a naive "copy the last matched
+   line's indent onto every added line" heuristic put a new `elif` one
+   nesting level too deep.
+2. Replaced it with a dedent-and-reindent approach: strip the model's
+   `replace` block to its own internal minimum indentation, then rebuild
+   it against the file's real base indent at the match site - independent
+   of whatever `search`'s indentation bug was. A second self-authored test
+   then revealed its own typo (inconsistent hand-typed indentation),
+   which the algorithm faithfully reproduced rather than silently
+   "fixing" - the honest, documented boundary of the technique: it
+   corrects a consistent *absolute* offset, it cannot repair a `replace`
+   block whose *relative* nesting is internally wrong. That's a real
+   limit, not a bug, and it's stated plainly rather than hidden.
+
+**Second bench (`diffedit-v2`) - the actual verdict:** classified all ten
+outcomes by what layer they failed at, not just pass/fail:
+
+| Outcome | v1 | v2 |
+|---|---|---|
+| Reached Godot (real validation failure) | 1 | 4 |
+| Reached the test_file guard (writing succeeded) | 1 | 3 |
+| Still failed purely on edit-matching | 8 | 3 |
+
+**7 of 10 tasks got past the exact mechanism that used to block 8 of 10.**
+Manually read one of the "reached Godot" failures (task 1): `Cannot call
+method 'add_child' on a null value` - an ordinary bad-resource-path
+mistake in freshly-written test code, the same *kind* of failure this
+project has measured since night one. Not a harness artifact.
+
+**The pass rate stayed 0/10, and that's still the honest number to
+report** - but it now means something different than it did on night one.
+The remaining failures are model-capability failures (wrong logic, wrong
+paths, one case where even the fallback correctly refused a genuinely
+non-matching search), not transcription-fidelity failures. Diff-based
+editing did not make this model good enough to pass the bench unattended.
+It did remove an entire structural failure class that no amount of
+prompting was ever going to fix, and left behind the kind of failures that
+a stronger model - or more iteration budget, or a Reviewer pass - could
+plausibly address. That's the difference between a harness with a hole in
+it and a harness that's honestly measuring a model's real ceiling.
+
+**A separate, smaller finding surfaced along the way:** the test_file
+guard (Finding 17) fired on 3 of 10 tasks this run, up from occasional -
+worth watching whether the two-mechanism output format (`new_files` vs
+`edits`) makes it easier for the model to lose track of the required test
+file now that it has two lists to keep straight instead of one. Not yet
+confirmed as a real pattern; flagged for the open items below.
+
+**Lesson, and maybe the best-earned one of the whole project:** "the
+number didn't move" and "nothing improved" are not the same claim, and
+conflating them here would have thrown away the actual result. Classifying
+*where* a failure happens, not just whether it happened, is what turned an
+apparently-flat 0/10 into a clear, evidence-backed confirmation that a
+real structural bug got fixed.
+
+---
+
+---
+
 ## Open items carried forward
 
 - [x] `/task feedback` and `/task retry` exercised end-to-end on a real
@@ -265,9 +349,14 @@ isn't statically obvious.
       re-queued, planner incorporated it, produced a different (better)
       approach that avoided the known player.gd corruption ceiling entirely.
       Uncovered Finding 17 in the process.
-- [ ] Diff-based editing instead of whole-file rewrites — the actual fix
-      for the edit-vs-create corruption split (Finding 11/14), not a
-      Reviewer agent. Biggest remaining lever on pass rate.
+- [x] Diff-based editing instead of whole-file rewrites (Finding 18) — done;
+      cut edit-matching failures from 8/10 to 3/10 tasks. Remaining gap is
+      model capability, not the editing mechanism.
+- [ ] The test_file guard (Finding 17) fired on 3/10 tasks in diffedit-v2,
+      up from occasional before — worth confirming whether the two-
+      mechanism output format (new_files vs edits) makes the model more
+      likely to drop the required test file now that it has two lists to
+      track instead of one.
 - [ ] The Ollama health check in the poll loop fires every cycle even
       during an active task run — harmless but noisy in logs; could skip
       the check while a task is in flight.
@@ -281,3 +370,5 @@ isn't statically obvious.
       the runner (Finding 17's generalization of Finding 2), or just the
       two specific cases seen so far (bare class refs, ambiguous `:=`
       inference). Worth a deliberate repro sweep if this keeps recurring.
+
+---

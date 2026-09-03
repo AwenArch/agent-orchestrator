@@ -1,0 +1,1 @@
+conv-v6-postmining: 3/9 reached Godot (vs diffedit-v2's 7/10 clearing edit-mechanics), 6/9 still edit-mechanics failures. NOT a clean comparison - MAX_ATTEMPTS (3->5) and 3 new CONVENTIONS.md rules both changed at once vs the v2 baseline. Inconclusive; needs an isolated re-test (revert one variable) before drawing any real conclusion.

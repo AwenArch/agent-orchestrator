@@ -16,7 +16,7 @@ from orchestrator.tools import repo as rt
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 app = typer.Typer()
 
-MAX_ATTEMPTS = 3
+MAX_ATTEMPTS = 5  # bumped from 3 - diff-based editing made failed attempts cheap (no Godot run needed when an edit doesn't apply), so a bigger budget costs much less than it used to
 EXEMPLARS = ["scenes/player/player.gd", "tests/unit/test_player.gd"]
 STATE_LABELS = ("agent:queued", "agent:running")
 

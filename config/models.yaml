@@ -5,7 +5,14 @@ endpoints:
 routing:
   planner: [local]
   coder: [local]
-  reviewer: [local]
+  # reviewer: [local]  # DISABLED by default - reviewer-v1 bench showed
+  # self-contradictory rejections on the same task (issue 93: told coder
+  # to hardcode values, then reversed itself and demanded GameConfig reads
+  # - directly undoing the task's own goal) and a likely false-positive
+  # 'unused variable' flag on issue 84. Same-class-model review risk that
+  # motivated deprioritizing 0b originally, now confirmed with evidence.
+  # Re-enable only behind an explicit flag, or once reviewed by a
+  # stronger/different model than the coder.
 options:
   temperature: 0.2
   num_ctx: 16384

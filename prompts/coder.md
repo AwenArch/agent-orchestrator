@@ -33,7 +33,8 @@ Output format - read carefully, this project uses two different mechanisms:
      more than one place in it.
    - The search text for each edit must match the file's current content
      EXACTLY ONCE. If it might match zero or multiple times, add more
-     surrounding context until it's unique. This commonly happens with repeated setup lines across multiple test functions - if so, include the enclosing `func test_...` line as part of `search` to disambiguate.
+     surrounding context until it's unique. If this happens inside a test file with repeated setup lines across multiple test functions, you MUST include the enclosing `func test_...` line as the FIRST line of `search` - this is required, not optional, whenever setup code repeats across functions.
+   - Keep `search` SHORT: 1-4 lines in almost every case. A `search` longer than 5-6 lines is almost always wrong - you are editing a small piece of the file, not rewriting a whole function or test.
 
 Never put an existing file's content in `new_files`. If a file already
 exists, every change to it must go through `edits`, however small.

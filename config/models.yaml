@@ -1,7 +1,13 @@
 endpoints:
   local:
     url: http://localhost:11434
-    model: qwen2.5-coder:14b   # swap per bench run
+    model: qwen3-coder:30b   # DEFAULT as of Finding 21/21b - 8/10 reached
+    # real Godot validation (vs 4/10 for the 14B, even with the same
+    # tightened prompt), competitive speed (100-250s/task), MoE
+    # architecture fits this hardware's 24GB cleanly (12%/88% CPU/GPU
+    # split, best of any model tried). Swap back to qwen2.5-coder:14b
+    # only for fast iteration/debugging where raw speed matters more
+    # than quality.
 routing:
   planner: [local]
   coder: [local]

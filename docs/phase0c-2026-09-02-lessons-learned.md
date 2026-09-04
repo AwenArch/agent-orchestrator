@@ -506,6 +506,39 @@ process behavior was correct.
 
 ---
 
+## Finding 21b — the same prompt fix, tested on the 14B: essentially no effect
+
+The obvious next question after Finding 21's 4/10 → 8/10 swing: is the
+tightened prompt (mandatory boilerplate disambiguation, hard search-length
+cap) a universal improvement, or something specific to the 30B? Reran the
+full ten-task bench on `qwen2.5-coder:14b` with the identical tightened
+prompt (`conv-v7-14b-tightened`). Result: **4/10 reached Godot** - flat
+against the 14B's own recent history, and actually worse than the
+`diffedit-v2` baseline's 7/10 clearing edit-mechanics (equivalently, 6/10
+still stuck here vs. 3/10 there).
+
+**Not a wasted or disappointing result - a real, controlled negative that
+sharpens Finding 21 instead of undermining it.** Reading what each model
+actually did wrong explains the gap: the 30B's edit-mechanics failures
+included a habit the 14B never really showed - `search` blocks spanning
+most of a file, defeating diff-based editing from the inside. The hard
+length cap is a precise antidote to exactly that behavior. The 14B's edit
+failures were always more about short-snippet whitespace mismatches and
+generic ambiguity - problems already substantially handled by the
+whitespace-tolerant fallback matcher and the pre-existing softer guidance.
+The fix targeted a mistake that happens to be a 30B habit, not a 14B one.
+
+**Lesson:** a prompt change validated on one model is a claim about that
+model, not a claim about models in general, until it's actually tested
+elsewhere - the instinct to check was worth having, and the negative
+result is exactly as informative as the positive one from Finding 21.
+`qwen3-coder:30b` + the tightened prompt remains the strongest
+configuration found this project; that conclusion holds. What doesn't
+hold is any assumption that the tightening was a free win applicable
+everywhere - it demonstrably was not, on hard evidence rather than guess.
+
+---
+
 ## Open items carried forward
 
 - [x] `/task feedback` and `/task retry` exercised end-to-end on a real
@@ -550,8 +583,9 @@ process behavior was correct.
       best-performing configuration found all project — 8/10 reaching real
       validation, competitive speed with the 14B. Worth making this the
       default in config/models.yaml once a couple more clean runs confirm
-      the 8/10 wasn't a lucky run, and worth trying the same prompt
-      tightening back on the 14B to see if it helps there too.
+      the 8/10 wasn't a lucky run. (The prompt tightening does NOT transfer
+      to the 14B - tested directly, Finding 21b - so this is specifically
+      a 30B-configuration recommendation, not a global prompt change.)
 - [x] Two competing Ollama services running simultaneously since project
       start (Finding 20) — found and fixed; the multi-day-old stale
       process was the likely cause of several "mystery" hangs blamed on

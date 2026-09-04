@@ -1,4 +1,5 @@
 """The only file that talks to Ollama. Every call is traced to runs/<task>/."""
+import concurrent.futures
 import hashlib
 import json
 import time
@@ -7,6 +8,9 @@ import ollama
 from pydantic import BaseModel, ValidationError
 
 from orchestrator.config import CFG, RUNS
+
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+CALL_TIMEOUT = 180  # seconds - a stuck Ollama generation now fails cleanly instead of hanging the whole pipeline indefinitely (hit this 3x: night-one task 7, and twice more even after fixing the duplicate-service bug)
 
 
 def call(role: str, task_id: str, step: str, system: str, user: str,
@@ -17,10 +21,17 @@ def call(role: str, task_id: str, step: str, system: str, user: str,
             {"role": "user", "content": user}]
     for attempt in range(2):  # one honest try + one repair try
         t0 = time.time()
-        r = client.chat(model=ep["model"], messages=msgs,
-                        format=schema.model_json_schema(),
-                        think=False,
-                        options=CFG["options"])
+        future = _executor.submit(
+            client.chat, model=ep["model"], messages=msgs,
+            format=schema.model_json_schema(), think=False,
+            options=CFG["options"])
+        try:
+            r = future.result(timeout=CALL_TIMEOUT)
+        except concurrent.futures.TimeoutError:
+            raise RuntimeError(
+                f"{role}/{step}: Ollama call exceeded {CALL_TIMEOUT}s - likely "
+                "a stuck generation. Restart Ollama (brew services restart "
+                "ollama) before retrying.")
         text = r["message"]["content"]
         _trace(task_id, step, attempt, ep, msgs, text, time.time() - t0, r)
         try:

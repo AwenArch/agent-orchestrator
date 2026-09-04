@@ -402,6 +402,110 @@ only worth something if it's actually independent.
 
 ---
 
+## Finding 20 — two competing Ollama services, one silently serving every request for days
+
+Recurring, unexplained hangs (a stall on task 7 one night, task 4 the next
+morning) were chased as model- or task-specific problems before the real
+cause surfaced: `launchctl list | grep ollama` showed **two separate
+registered services** - `homebrew.mxcl.ollama` (what every `brew services
+restart ollama` command all week had actually been targeting) and
+`com.zac.ollama` (a custom LaunchAgent built by hand back in 0-prep,
+day one, specifically to control env vars like `OLLAMA_KEEP_ALIVE`).
+`ps aux` confirmed it: PID 1528, running continuously since **Sunday 6PM**,
+was the one actually bound to port 11434 and answering every single
+request all week. Every `brew services restart` had been restarting a
+service that was never serving anything - the real, multi-day-old process
+was untouched by any of it.
+
+This plausibly explains both prior hangs on its own: a single inference
+router process alive for days, cycling through four different models
+dozens of times without ever restarting clean, is exactly the kind of
+thing that accumulates state and eventually stalls.
+
+**Fix:** killed the stale process, disabled the old custom LaunchAgent
+(`launchctl bootout` + renamed the plist to `.disabled` so it can't
+silently reappear on next login), and standardized on `brew services`
+going forward as the single source of truth.
+
+**Lesson:** infrastructure set up once at the start of a project (the
+custom LaunchAgent, built for a real reason in 0-prep) can silently
+outlive its purpose once later tooling (`brew services`, adopted for
+convenience mid-project) is layered on top without retiring the old path.
+Two things that both look like "how Ollama is running" were true at once
+for weeks, and only `launchctl list`'s raw registry - not `ollama --version`,
+not `curl`, not anything that talks to the service through its normal
+interface - revealed that there were two.
+
+---
+
+## Finding 21 — qwen3-coder:30b: worse than the 14B on edit-mechanics at first, then the single best result of the whole project after one prompt fix
+
+**Speed, settled immediately and cleanly.** `qwen3-coder:30b` (30B MoE,
+3.3B active, 20GB, 12%/88% CPU/GPU split - the best split of any model
+tried) ran every task in the 104-249s range, fully competitive with the
+14B and nothing like the 12-56 *minute* ordeals of the two prior larger
+models. First model above 14B to look genuinely practical on this
+hardware, exactly matching what Finding 10's dense-vs-MoE theory predicted
+a smaller, cleanly-fitting MoE model should do.
+
+**Quality, on the first bench (`qwen30b-coder-v1`), was a real surprise -
+and not a good one.** Edit-mechanics failures: 6 of 10 tasks, *worse* than
+the 14B's most recent clean showing (3/10). Reading the actual failures
+showed two distinct new habits this model has that the 14B didn't: it
+would sometimes write a `search` block spanning most of a file (defeating
+diff-based editing's whole purpose from the inside), and it hit the same
+repeated-test-boilerplate ambiguity the 14B hit weeks earlier - meaning
+the existing prompt guidance for that case (a soft "if this commonly
+happens, consider...") wasn't reliably followed by *either* model family.
+
+**Fix:** tightened `prompts/coder.md` from a suggestion to a requirement -
+disambiguating via the enclosing `func test_...` line became mandatory,
+not optional, whenever setup code repeats across functions; a 1-4 line
+cap on `search` length was stated as a hard rule, not encouraged.
+
+**Measuring it required fixing something else first - a timeout bug with
+its own real story.** A prior fix (night one's long-standing "Ollama calls
+have no timeout" gap) had been patched using `ThreadPoolExecutor` and
+verified with a quick test that showed it raising the right exception.
+That test was insufficient: a live bench run hung for 965 seconds with the
+timeout message never appearing anywhere. The actual bug was subtle -
+`ThreadPoolExecutor` registers a cleanup hook that blocks process exit
+until every submitted thread finishes, so the 180s timeout *did* fire and
+raise `RuntimeError` internally, and then the process sat waiting anyway
+for the now-abandoned Ollama call to finish on its own, which could take
+15+ minutes. The fix that had "passed its test" was actually still fully
+broken under real load.
+
+Real fix: a plain daemon thread instead of an executor - `thread.join
+(timeout=...)`, and on timeout the process can actually exit immediately
+because a daemon thread never blocks shutdown. Verified properly this
+time: not "does it raise the right error" but "does the whole process
+return control to the shell afterward," using an artificially short
+timeout to force the real code path and watching for the process to
+actually end.
+
+**With both fixes in place, `qwen30b-coder-v2` (identical tasks, one
+prompt change from v1) produced the cleanest result of the entire
+project:** edit-mechanics failures dropped from 6/10 to **2/10**;
+"reached Godot" (meaning the model's code was actually complete and
+running through real validation, whatever its outcome) rose from 4/10 to
+**8/10**. That is the single largest swing any harness or prompt change
+has produced. The remaining two failures were the fallback matcher
+correctly refusing content that genuinely wasn't in the file - the honest
+limit, not a bug.
+
+**Lesson, and it's really about method, not models:** a fix that looks
+correct and passes a quick check can still be broken in a way only real,
+sustained load reveals - "the code is right" and "the fix works" are not
+the same claim, and only one of them was actually verified the first
+time. The timeout bug wasn't a distraction from measuring the prompt fix;
+it was the thing standing between "we have an idea that might help" and
+"we have a number that proves it," and only got found by refusing to
+accept a plausible-looking exception message as proof the underlying
+process behavior was correct.
+
+---
+
 ## Open items carried forward
 
 - [x] `/task feedback` and `/task retry` exercised end-to-end on a real
@@ -436,5 +540,21 @@ only worth something if it's actually independent.
       the specific thing that failed, not necessarily review in general.
       Must run as a single isolated variable next time, not bundled with
       other changes.
+- [x] Ollama calls had no timeout (open since night one) — fixed, and fixed
+      TWICE (Finding 21): the first attempt used ThreadPoolExecutor, which
+      raised the right exception but still let the process hang for
+      15+ minutes waiting on an abandoned thread via the executor's atexit
+      hook. Real fix is a plain daemon thread. Verified by confirming the
+      process actually exits, not just that it raises the right error.
+- [ ] `qwen3-coder:30b` + the tightened coder prompt (Finding 21) is the
+      best-performing configuration found all project — 8/10 reaching real
+      validation, competitive speed with the 14B. Worth making this the
+      default in config/models.yaml once a couple more clean runs confirm
+      the 8/10 wasn't a lucky run, and worth trying the same prompt
+      tightening back on the 14B to see if it helps there too.
+- [x] Two competing Ollama services running simultaneously since project
+      start (Finding 20) — found and fixed; the multi-day-old stale
+      process was the likely cause of several "mystery" hangs blamed on
+      specific tasks or models. Standardized on `brew services` only.
 
 ---

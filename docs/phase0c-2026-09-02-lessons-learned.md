@@ -539,6 +539,33 @@ everywhere - it demonstrably was not, on hard evidence rather than guess.
 
 ---
 
+## Finding 21c — the 8/10 result confirmed on a second clean run
+
+Reran the identical `qwen3-coder:30b` + tightened-prompt configuration
+(`qwen30b-coder-v3`) purely to check Finding 21's 8/10 wasn't a lucky
+roll. It wasn't: **8/10 reached Godot again**, with the same 8/1/1 split
+between "reached Godot," "edit failed even with fallback," and "edit
+ambiguous" as `qwen30b-coder-v2`. Also checked, on the same day, whether
+context-window size could plausibly explain any of this project's
+failures generally: mined every trace's recorded `prompt_tokens` across
+622 calls project-wide. The largest was one outlier at 83.7% of the
+16,384 ceiling (an early 27B run); every `qwen3-coder:30b` call this week
+sat at 20-25%. Context truncation is ruled out as a cause of anything
+seen so far - the failures have specific, already-identified causes
+(wrong API calls, transcription mismatches, edit-matching misses), not a
+capacity problem.
+
+**This is now the confirmed default**, backed by two independent clean
+runs rather than one: `qwen3-coder:30b` reliably reaches real Godot
+validation on 8 of 10 tasks - meaning the model's code is complete and
+testable, not that it's correct. The honest ceiling moved from "often
+can't even produce matchable, testable code" to "reliably produces
+testable code that's still frequently wrong" - a meaningfully better
+place to be failing from, even though the full autonomous pass rate is
+still 0/10.
+
+---
+
 ## Open items carried forward
 
 - [x] `/task feedback` and `/task retry` exercised end-to-end on a real
@@ -579,13 +606,13 @@ everywhere - it demonstrably was not, on hard evidence rather than guess.
       15+ minutes waiting on an abandoned thread via the executor's atexit
       hook. Real fix is a plain daemon thread. Verified by confirming the
       process actually exits, not just that it raises the right error.
-- [ ] `qwen3-coder:30b` + the tightened coder prompt (Finding 21) is the
-      best-performing configuration found all project — 8/10 reaching real
-      validation, competitive speed with the 14B. Worth making this the
-      default in config/models.yaml once a couple more clean runs confirm
-      the 8/10 wasn't a lucky run. (The prompt tightening does NOT transfer
-      to the 14B - tested directly, Finding 21b - so this is specifically
-      a 30B-configuration recommendation, not a global prompt change.)
+- [x] `qwen3-coder:30b` + the tightened coder prompt (Finding 21/21c) is
+      the confirmed default — 8/10 reaching real validation on TWO
+      independent clean runs, competitive speed with the 14B. Set as the
+      default in config/models.yaml. (The prompt tightening does NOT
+      transfer to the 14B - tested directly, Finding 21b - so this is
+      specifically a 30B-configuration recommendation, not a global
+      prompt change.)
 - [x] Two competing Ollama services running simultaneously since project
       start (Finding 20) — found and fixed; the multi-day-old stale
       process was the likely cause of several "mystery" hangs blamed on

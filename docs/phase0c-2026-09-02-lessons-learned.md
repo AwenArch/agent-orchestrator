@@ -566,7 +566,96 @@ still 0/10.
 
 ---
 
+## Finding 22 — task 1 (double-jump), a deep dive: three real root causes found by hand, ending in an actual PASS
+
+Task 1 had "reached Godot" on every `qwen3-coder:30b` run (v1, v2, v3) and
+on every 14B run before that, but never once cleared real validation.
+Rather than treat that as one more entry in a tally, picked this single
+task and debugged it by hand, past the automated 5-attempt budget, to
+find out what was actually standing between "reaches Godot" and "passes."
+Three genuinely distinct, real causes, layered on top of each other:
+
+**1. Faking `is_on_floor()` instead of building a real floor.** Every
+attempt across every run used `player.set_position(...)` and
+`set_collision_layer_value(...)` to "simulate" being grounded -
+`is_on_floor()` is a real physics result computed during
+`move_and_slide()`'s actual collision detection; nothing about position
+or collision-mask values can substitute for it. Confirmed precisely from
+the failing numbers themselves: expected jump velocities came back as
+plain gravity decay (`0.0`, then `16.33` - one physics frame's worth of
+fall) - no jump ever fired, because the player was never actually
+grounded to jump from.
+
+A CONVENTIONS.md rule naming this exactly, with a code snippet included,
+was written and confirmed present in the prompt on the *next* attempt -
+and the model still faked the floor with `position.y` anyway. A second,
+different mechanism was needed: a hand-written, fully-working exemplar
+test file (`test_floor_pattern_example.gd`) added to the coder's
+always-shown files. That worked immediately - the very next attempt built
+a real `StaticBody2D` + `CollisionShape2D`, copied almost verbatim from
+the exemplar. **A worked example succeeded exactly where a specific,
+correctly-worded prose rule failed twice in a row** - the clearest
+demonstration yet that for structural patterns (not simple wrong-API
+knowledge gaps), showing beats telling for this model class.
+
+**2. Missing `Input.action_release()` between repeated presses.** With
+the floor fixed, jumps still weren't firing on the second and third
+attempts. `Input.is_action_just_pressed()` only fires on the transition
+from released to pressed - calling `action_press()` again while the
+action is already held is a silent no-op, no new edge, no new jump.
+None of the model's test attempts across any run ever released the
+button between presses. Confirmed by hand-editing in the releases and
+watching the exact failure disappear. Written into CONVENTIONS.md as its
+own rule - general enough to plausibly help any future test needing more
+than one simulated press.
+
+**3. An assertion checking the wrong thing.** After both fixes, one
+assertion still failed: a "third jump should do nothing" test asserted
+`velocity.y == exactly -400.0` (the jump-impulse value) instead of
+something like "still less negative than a fresh jump" - the correct
+game behavior (no third jump, gravity decaying as normal) will never
+match an exact equality check written for a moment-of-jump velocity. Not
+a hallucination or a missed rule - a self-inconsistent test, asserting
+something other than what its own comment said it was testing. Fixed by
+hand to `is_greater(-400.0)`.
+
+**A minor methodological note from the debugging itself:** several
+attempts to patch the test file by hand failed on exact string matching
+before landing - not because the reasoning was wrong, but because real
+whitespace (blank lines between statements, a repeated comment appearing
+in two functions) didn't match what was assumed. Fixed each time by
+printing `repr()` of the actual surrounding text on a failed match rather
+than guessing again - the same "read the ground truth, don't reason from
+memory" discipline that's been the throughline of this entire project,
+just applied to editing a file by hand instead of reading a model's trace.
+
+**Result: `VALIDATE: PASS`, all 5 test cases, all 4 suites.** The fixed
+test is now committed in the game repo. Worth stating the honest scope
+plainly: **the automated pipeline did not solve this within its 5-attempt
+budget on any run** - every one of these three root causes required
+manual, line-by-line human debugging past what the harness does on its
+own. This is not evidence the model can pass this task unattended today.
+What it does prove: `player.gd`'s double-jump implementation (written by
+the model, verified correct by hand back when this task was first
+diagnosed) was right all along - every blocker was in test code, never in
+the actual game logic - and two of the three causes are now permanently
+encoded (a CONVENTIONS.md rule, plus a working exemplar file) for whatever
+runs into them next.
+
+**A loose thread worth flagging, not yet explained:** across all three
+full `qwen3-coder:30b` runs of this issue, the `test_file` guard fired on
+attempts 2 and 4 specifically, every single time - never attempt 1, 3, or
+5. That's too consistent to be coincidence and not yet understood; worth
+a dedicated look if it keeps recurring on other tasks.
+
+---
+
 ## Open items carried forward
+
+- [ ] Finding 22's odd pattern: the test_file guard fired on attempts 2
+      and 4 specifically, every single time, across all three full
+      qwen3-coder:30b runs of issue #156/task 1. Never attempt 1, 3, or 5.
+      Too consistent to be coincidence, not yet understood.
 
 - [x] `/task feedback` and `/task retry` exercised end-to-end on a real
       needs-human task (#60) — confirmed working: feedback comment posted,

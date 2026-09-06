@@ -7,7 +7,9 @@ import typer
 from rich import print as rprint
 
 from orchestrator import llm
-from orchestrator.config import ROOT
+import time
+
+from orchestrator.config import ROOT, RUNS
 from orchestrator.github_client import repo
 from orchestrator.schemas import CodeOut, Plan, ReviewResult
 from orchestrator.tools import godot
@@ -27,6 +29,23 @@ def _prompt(name: str, **kw) -> str:
     return (ROOT / "prompts" / f"{name}.md").read_text().format(**kw)
 
 
+def _archive_stale_run_dir(issue_number: int) -> None:
+    """runs/<issue>/ is keyed only by issue number, not by invocation -
+    re-running the same issue by hand (e.g. while debugging) silently
+    OVERWRITES the prior run's trace files with no warning, permanently
+    destroying that debugging history. Found this the hard way: a claimed
+    attempt-2/4 pattern in issue #156 turned out to be an artifact of a
+    second manual run clobbering the first run's traces. Archive any
+    existing directory under a timestamp suffix before starting fresh, so
+    nothing is ever silently lost - the current run keeps using the plain
+    runs/<issue>/ path exactly as every existing script this project has
+    written all week already assumes."""
+    d = RUNS / str(issue_number)
+    if d.exists() and any(d.iterdir()):
+        stamp = time.strftime("%Y%m%dT%H%M%S")
+        d.rename(RUNS / f"{issue_number}_{stamp}")
+
+
 def _clear_state_labels(issue) -> None:
     for l in STATE_LABELS:
         try:
@@ -40,6 +59,7 @@ def run_task(issue_number: int) -> dict:
     Does not raise for an ordinary task failure (that's a needs-human
     result); may raise for real infrastructure errors (Ollama down, git
     failure) - the daemon catches those separately."""
+    _archive_stale_run_dir(issue_number)
     gh = repo()
     task = gh.get_issue(issue_number)
     rprint(f"[bold]Task #{issue_number}:[/bold] {task.title}")

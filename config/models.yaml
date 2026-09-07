@@ -11,14 +11,12 @@ endpoints:
 routing:
   planner: [local]
   coder: [local]
-  # reviewer: [local]  # DISABLED by default - reviewer-v1 bench showed
-  # self-contradictory rejections on the same task (issue 93: told coder
-  # to hardcode values, then reversed itself and demanded GameConfig reads
-  # - directly undoing the task's own goal) and a likely false-positive
-  # 'unused variable' flag on issue 84. Same-class-model review risk that
-  # motivated deprioritizing 0b originally, now confirmed with evidence.
-  # Re-enable only behind an explicit flag, or once reviewed by a
-  # stronger/different model than the coder.
+  reviewer: [local]  # RE-ENABLED for a clean re-test - the original
+  # failure (Finding 19) was a 14B reviewing a 14B and self-contradicting
+  # (issue 93). Now testing whether a 30B reviewer (same model as the
+  # coder, avoiding cross-model swap latency) makes more reliable calls.
+  # If this also proves unreliable, the code stays and this line gets
+  # commented out again with the new evidence documented.
 options:
   temperature: 0.2
   num_ctx: 16384

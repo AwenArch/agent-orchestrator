@@ -51,11 +51,30 @@ def call(role: str, task_id: str, step: str, system: str, user: str,
     raise RuntimeError(f"{role}/{step}: unparseable after repair attempt")
 
 
+# Cache of {endpoint_url: last_verified_timestamp}. _pick() was calling
+# .list() fresh before EVERY single llm.call() (planner once, coder once
+# per attempt, reviewer once per attempt when enabled) - for a 7-attempt
+# run that's 14+ redundant reachability checks, each logging its own
+# "INFO HTTP Request: GET .../api/tags" line, which is the real source of
+# the log noise this open item originally (and slightly incorrectly)
+# attributed to the daemon's poll loop. A short TTL skips re-verifying an
+# endpoint that answered recently; the 180s CALL_TIMEOUT in call() remains
+# the real safety net if Ollama actually goes down mid-run - a cached
+# "was reachable" doesn't mean the next chat() call can't still time out
+# and raise cleanly, it just stops re-proving the obvious every time.
+_endpoint_cache: dict[str, float] = {}
+CACHE_TTL = 30  # seconds
+
+
 def _pick(role: str) -> dict:
     for name in CFG["routing"][role]:
         ep = CFG["endpoints"][name]
+        last_ok = _endpoint_cache.get(ep["url"])
+        if last_ok is not None and time.time() - last_ok < CACHE_TTL:
+            return ep
         try:
             ollama.Client(host=ep["url"]).list()
+            _endpoint_cache[ep["url"]] = time.time()
             return ep
         except Exception:
             continue

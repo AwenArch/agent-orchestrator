@@ -761,9 +761,17 @@ attempts of the same one talking to itself.
       mechanism output format (new_files vs edits) makes the model more
       likely to drop the required test file now that it has two lists to
       track instead of one.
-- [ ] The Ollama health check in the poll loop fires every cycle even
-      during an active task run — harmless but noisy in logs; could skip
-      the check while a task is in flight.
+- [x] "The Ollama health check in the poll loop fires every cycle even
+      during an active task" — checked the real code before fixing it and
+      the framing was slightly wrong: `daemon.py`'s poll loop is fully
+      synchronous and blocks on `run_task()`, so the daemon's own check
+      genuinely doesn't re-fire mid-task. The real noise source was
+      `llm.py`'s `_pick()`, which called `.list()` fresh before every
+      single `llm.call()` - 14+ redundant checks on a 7-attempt reviewer
+      run, each logging its own HTTP line. Fixed with a 30s reachability
+      cache; verified directly (first call 14.1s including the real
+      check, second call 2.8s with it skipped). The 180s call timeout
+      remains the real safety net if Ollama actually goes down mid-run.
 - [ ] No launchd plist yet — the daemon has only been run interactively in
       a foreground terminal. Needed before "always-on" is real rather than
       "on while I'm at my desk with the terminal open."

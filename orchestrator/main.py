@@ -9,7 +9,7 @@ from rich import print as rprint
 from orchestrator import llm
 import time
 
-from orchestrator.config import ROOT, RUNS
+from orchestrator.config import CFG, ROOT, RUNS
 from orchestrator.github_client import repo
 from orchestrator.schemas import CodeOut, Plan, ReviewResult
 from orchestrator.tools import godot
@@ -91,8 +91,19 @@ def run_task(issue_number: int) -> dict:
     feedback_block = ""
     ok, log = False, ""
 
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        rprint(f"[bold]Coder attempt {attempt}/{MAX_ATTEMPTS}[/bold]")
+    reviewer_enabled = "reviewer" in CFG.get("routing", {})
+    # Reviewer rejections consume attempts from the same fixed budget the
+    # coder needs to recover from its own mistakes - bench evidence
+    # (reviewer-30b-v2) showed "reached Godot" collapse from 8/10 to 1/10
+    # at MAX_ATTEMPTS=5 specifically because review-fix cycles ate the
+    # budget meant for validation-fix cycles. Give reviewer-enabled runs
+    # more room so review and validation aren't competing for the same
+    # slots; non-reviewer runs stay at the original MAX_ATTEMPTS so the
+    # existing 8/10 baseline stays comparable.
+    effective_max_attempts = MAX_ATTEMPTS + 2 if reviewer_enabled else MAX_ATTEMPTS
+
+    for attempt in range(1, effective_max_attempts + 1):
+        rprint(f"[bold]Coder attempt {attempt}/{effective_max_attempts}[/bold]")
         code = llm.call(
             "coder", str(issue_number), f"code-{attempt}",
             system="You are an expert Godot 4 GDScript developer. Reply ONLY "
@@ -155,8 +166,6 @@ def run_task(issue_number: int) -> dict:
         # rejection here skips straight to a retry (no Godot run wasted on
         # something a review already flagged); an approval still goes on
         # to the real validation, never treated as sufficient on its own.
-        from orchestrator.config import CFG
-        reviewer_enabled = "reviewer" in CFG.get("routing", {})
         review = None
         if reviewer_enabled:
             touched_content = rt.read_files(workdir, touched)
@@ -196,7 +205,7 @@ def run_task(issue_number: int) -> dict:
         _clear_state_labels(task)
         task.add_to_labels("agent:needs-human")
         task.create_comment("## Needs human\nValidation still failing after "
-                            f"{MAX_ATTEMPTS} attempts.\n```\n{log}\n```")
+                            f"{effective_max_attempts} attempts.\n```\n{log}\n```")
         rprint("[red bold]NEEDS HUMAN[/red bold] - see issue comment and runs/")
         return {"ok": False, "issue": issue_number, "pr_url": None, "log": log}
 

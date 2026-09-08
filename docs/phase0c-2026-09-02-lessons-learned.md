@@ -804,6 +804,53 @@ measured. Four separate checks, one real, well-earned finding.
 
 ---
 
+## Finding 25 — confirmed: ANY parse error crashes the gdUnit4 runner, not just the two originally-seen cases
+
+Finding 17 generalized from two observed crashes (a bare class reference,
+an ambiguous `:=` type inference) to a guess: maybe *any* parse error
+crashes gdUnit4's test discovery on this Godot 4.7.2 install, not just
+those two. Left open rather than assumed, per this project's whole
+practice of not trusting a pattern until it's checked.
+
+Built a proper sweep: six structurally distinct broken test files, each
+isolated (write, run just the gdUnit4 discovery stage, check for a crash
+signature, delete, move to the next) - the same isolation method as the
+original Finding 2 repro. Cases: the two known crashers (bare class
+reference, ambiguous inference) as controls, plus four new categories -
+a missing colon after a function signature (plain syntax error), an
+`extends` clause naming a class that doesn't exist, two functions in one
+file sharing the same name, and a bare undefined identifier used
+directly.
+
+**Result: 6 for 6. Every single case crashed**, with the identical
+signature each time (the same `Abort trap: 6` / `recursive_mutex::lock()`
+double-frame pattern seen throughout the project). Not narrow to the
+original two cases - this looks structural to how gdUnit4's test
+discovery handles a script that fails to parse *at all*, regardless of
+which specific mistake caused the failure.
+
+**Practical upshot:** this doesn't need a new CONVENTIONS.md rule the way
+most findings have - there's no single fix for "don't write a script with
+a parse error," since that covers every mistake a model could possibly
+make while writing GDScript. What it does confirm is that the
+crash-suppression response (system-wide `defaults write
+com.apple.CrashReporter DialogType none`, done in Finding 24) was the
+right kind of fix - not narrowly for one bug pattern, but for the whole
+class. The gate's own handling was already correct too: `validate.sh`
+checks both exit code and log content regardless of *how* a stage failed,
+so a crash has never silently passed as a PASS at any point in this
+project - this was purely about the OS popping a blocking dialog, now
+handled.
+
+**Lesson:** a "worth confirming" item sat open for a while rather than
+getting silently upgraded to "confirmed" on the strength of a plausible
+guess - and when it finally got tested properly, the guess turned out
+right, cleanly, with real evidence backing it instead of inference. That
+distinction (tested-and-right vs. assumed-and-right) is worth the couple
+of days it sat as an open item rather than a closed one.
+
+---
+
 ## Open items carried forward
 
 - [x] Finding 22's original claim (test_file guard on attempts 2 & 4
@@ -843,18 +890,13 @@ measured. Four separate checks, one real, well-earned finding.
 - [ ] Concurrency is still hard-coded to one task at a time (by design, per
       the architecture doc's single-writer rule) — fine for now, revisit
       only if queue depth ever becomes the actual bottleneck.
-- [ ] Confirm whether ANY parse error during gdUnit4 test discovery crashes
-      the runner (Finding 17's generalization of Finding 2), or just the
-      two specific cases seen so far (bare class refs, ambiguous `:=`
-      inference). UPDATE (Finding 24): confirmed recurring - 8 crash
-      reports in under an hour on 2026-09-08, all matching the same
-      signature (EXC_BAD_ACCESS, doubled recursive_mutex::lock() frame).
-      Plausibly tied to memory pressure making the bug fire more often,
-      not proven. Crash dialog now suppressed system-wide so it can't
-      block an unattended run; the underlying engine bug itself is still
-      unfixed (can't be - it's in Godot/gdUnit4, not this codebase) and a
-      deliberate repro sweep across more parse-error patterns is still
-      worth doing.
+- [x] Confirm whether ANY parse error during gdUnit4 test discovery crashes
+      the runner (Finding 17's generalization of Finding 2) — CONFIRMED in
+      Finding 25 via a 6-case sweep: every parse-error category tested
+      crashed, identical signature each time. Not narrow to the original
+      two cases; structural to gdUnit4 handling any unparseable script.
+      Crash dialog suppression (Finding 24) is the correct, general fix -
+      no single CONVENTIONS.md rule can cover "don't make any mistake."
 - [x] Reviewer agent (Finding 19, revisited in Finding 23) — re-tested
       with the stronger qwen3-coder:30b reviewing itself, and again with a
       bigger attempt budget to rule out starvation. Both came back worse

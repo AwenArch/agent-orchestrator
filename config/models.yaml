@@ -11,12 +11,15 @@ endpoints:
 routing:
   planner: [local]
   coder: [local]
-  reviewer: [local]  # RE-ENABLED for a clean re-test - the original
-  # failure (Finding 19) was a 14B reviewing a 14B and self-contradicting
-  # (issue 93). Now testing whether a 30B reviewer (same model as the
-  # coder, avoiding cross-model swap latency) makes more reliable calls.
-  # If this also proves unreliable, the code stays and this line gets
-  # commented out again with the new evidence documented.
+  # reviewer: [local]  # DISABLED again after a second clean test
+  # (reviewer-30b-v2, v3). This time the 30B reviewer's individual
+  # rejections were often genuinely correct (unlike Finding 19's 14B
+  # self-contradiction) - but the coder+reviewer loop doesn't converge:
+  # "reached Godot" stuck at 1/10 both with MAX_ATTEMPTS=5 and =7, and
+  # giving more budget just increased tasks ending in permanent reviewer
+  # deadlock (5/10 -> 7/10) instead of resolving them. Not a budget
+  # problem - a convergence problem. Revisit only with a genuinely
+  # different reviewer model, not more attempts of the same one.
 options:
   temperature: 0.2
   num_ctx: 16384

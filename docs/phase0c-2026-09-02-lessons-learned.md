@@ -739,6 +739,71 @@ attempts of the same one talking to itself.
 
 ---
 
+## Finding 24 — the test_file guard, root-caused and fixed: 0/30 → 4/20 → 0/9
+
+An open item's own framing ("up from occasional") got the same treatment
+Finding 22 taught was necessary: checked against real evidence before
+trusting it. It held up, and turned out to understate the case - the
+guard fired on **0 of 30** tasks across the entire whole-file-rewrite era
+(never, not once), then **4 of 20** once diff-based editing shipped. A
+real, confirmed, timed-exactly-with-the-architecture-change pattern, not
+an overgeneralization this time.
+
+**Root cause, found by reading the actual model output from all four
+hits, not guessing:** every single one showed the identical shape -
+`new_files: []`, `edits` populated with only the pre-existing files being
+changed (`player.gd`, sometimes `test_player.gd`). Not a wrong-list mixup
+(the original hypothesis) - a clean omission. Whenever a task needed both
+an edit to an existing file and a brand-new file, the model reliably
+produced the edit and silently dropped the new file from its response
+entirely, 4 for 4.
+
+**Fix:** added an explicit, mandatory cross-check to the end of
+`prompts/coder.md` - check the response's `new_files` and `edits` arrays
+against the plan's `files_to_create`/`files_to_change` lists before
+replying, and name directly that both are commonly non-empty in the same
+response.
+
+**First test (issue #199, one task) was honestly inconclusive** - 2 of 5
+attempts still hit the guard, 3 of 5 got past it. Correctly not declared
+a win on one noisy sample. The real test was a full bench run
+(`diffedit-v3`): **9 of 9 valid tasks reached real Godot validation. Zero
+test_file guard hits. Zero edit-mechanics failures of any kind** - better
+than every prior diff-editing run, and better than the no-reviewer
+`qwen3-coder:30b` baselines too (which each had 1-2 edit-mechanics
+failures of their own). The cleanest result this specific failure class
+has ever produced.
+
+**Caveat worth keeping attached to this result:** the run wasn't perfectly
+clean end-to-end. Task 4 hit the 180s call timeout (working correctly,
+unrelated to the fix being tested) during a stretch where the machine was
+genuinely maxed - `top` showed 23G/24G used, 124M free - after a full
+day cycling four different models through Ollama. That same session also
+produced eight Godot crash reports in under an hour, all matching Finding
+17's known parse-error-crashes-gdUnit4 signature exactly (`EXC_BAD_ACCESS`
+at a small offset, the same doubled `recursive_mutex::lock()` frame seen
+in every prior instance of this bug) - the first time that generalization
+has been confirmed as genuinely *recurring* rather than seen once or
+twice. Both are plausibly explained by memory pressure making an
+already-known engine bug fire more often, not a new problem - but neither
+is fully proven, and the coder-output fix and the memory-pressure/crash
+question are separate mechanisms that happened to share a session.
+Suppressed the crash dialog system-wide (`defaults write
+com.apple.CrashReporter DialogType none`) so a future crash can't block
+an unattended run, and restarted Ollama fresh. A fully quiet confirmation
+run of the `new_files`/`edits` fix, on a machine with real headroom, is
+still worth doing for full rigor - but the result already stands on its
+own as strong evidence, not proof pending an asterisk.
+
+**Lesson:** the same discipline applied twice in one investigation -
+verify the claim before trusting it, read real output before guessing the
+mechanism, don't declare victory on one sample, and be honest about what
+context (a maxed-out machine) might be riding along with a result even
+when that context doesn't actually explain the specific thing being
+measured. Four separate checks, one real, well-earned finding.
+
+---
+
 ## Open items carried forward
 
 - [x] Finding 22's original claim (test_file guard on attempts 2 & 4
@@ -756,11 +821,11 @@ attempts of the same one talking to itself.
 - [x] Diff-based editing instead of whole-file rewrites (Finding 18) — done;
       cut edit-matching failures from 8/10 to 3/10 tasks. Remaining gap is
       model capability, not the editing mechanism.
-- [ ] The test_file guard (Finding 17) fired on 3/10 tasks in diffedit-v2,
-      up from occasional before — worth confirming whether the two-
-      mechanism output format (new_files vs edits) makes the model more
-      likely to drop the required test file now that it has two lists to
-      track instead of one.
+- [x] The test_file guard (Finding 17, root-caused and fixed in Finding
+      24) — was a clean omission (new_files left empty), not a wrong-list
+      mixup. Fixed with a mandatory cross-check in the coder prompt;
+      confirmed 0/9 valid tasks hit it on the follow-up bench run, down
+      from 4/20 in the diff-editing era.
 - [x] "The Ollama health check in the poll loop fires every cycle even
       during an active task" — checked the real code before fixing it and
       the framing was slightly wrong: `daemon.py`'s poll loop is fully
@@ -781,7 +846,15 @@ attempts of the same one talking to itself.
 - [ ] Confirm whether ANY parse error during gdUnit4 test discovery crashes
       the runner (Finding 17's generalization of Finding 2), or just the
       two specific cases seen so far (bare class refs, ambiguous `:=`
-      inference). Worth a deliberate repro sweep if this keeps recurring.
+      inference). UPDATE (Finding 24): confirmed recurring - 8 crash
+      reports in under an hour on 2026-09-08, all matching the same
+      signature (EXC_BAD_ACCESS, doubled recursive_mutex::lock() frame).
+      Plausibly tied to memory pressure making the bug fire more often,
+      not proven. Crash dialog now suppressed system-wide so it can't
+      block an unattended run; the underlying engine bug itself is still
+      unfixed (can't be - it's in Godot/gdUnit4, not this codebase) and a
+      deliberate repro sweep across more parse-error patterns is still
+      worth doing.
 - [x] Reviewer agent (Finding 19, revisited in Finding 23) — re-tested
       with the stronger qwen3-coder:30b reviewing itself, and again with a
       bigger attempt budget to rule out starvation. Both came back worse

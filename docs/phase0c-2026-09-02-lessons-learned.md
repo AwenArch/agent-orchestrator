@@ -642,20 +642,111 @@ the actual game logic - and two of the three causes are now permanently
 encoded (a CONVENTIONS.md rule, plus a working exemplar file) for whatever
 runs into them next.
 
-**A loose thread worth flagging, not yet explained:** across all three
-full `qwen3-coder:30b` runs of this issue, the `test_file` guard fired on
-attempts 2 and 4 specifically, every single time - never attempt 1, 3, or
-5. That's too consistent to be coincidence and not yet understood; worth
-a dedicated look if it keeps recurring on other tasks.
+**A loose thread that turned out not to be one, plus a real bug found
+while chasing it:** the original version of this finding claimed the
+`test_file` guard fired on attempts 2 and 4 specifically, every time,
+across all three bench runs. Checked that claim properly against the
+actual bench traces (issues #114, #124, #146) before writing it down for
+good, and it doesn't hold: the guard never fired at all in two of the
+three runs, and fired once, on attempt 3, in the third. No attempt-2/4
+pattern exists in the real data - that claim was an overgeneralization
+from the two manual `#156` runs done during this same debugging session,
+which happened to both show the guard firing on two non-adjacent
+attempts.
+
+Tracking down *why* those two manual runs disagreed with each other
+(attempts 2 & 4 the first time, attempts 3 & 5 the second) surfaced a
+real, previously-unknown bug instead: **`runs/<issue>/` is keyed only by
+issue number, not by invocation.** Re-running the same issue by hand -
+exactly what this whole debugging session did, twice, on #156 - silently
+overwrites the prior run's trace files with no warning. What looked like
+"issue 156's attempt history" was only ever the second manual run's data;
+the first run's real trace files were already gone by the time they were
+read. Fixed by archiving any pre-existing `runs/<issue>/` directory under
+a timestamp suffix before a fresh run starts, rather than restructuring
+the storage layout - every trace-reading script written this project has
+assumed a flat `runs/<issue>/*.json` path, and this preserves that for
+whichever run is current while never destroying the ones before it.
+
+**Lesson:** the same discipline that's run through this whole project -
+check the claim against real evidence before writing it down, don't
+generalize from two data points - applies to the project's own
+documentation, not just to the model's behavior. A "mystery" is worth
+naming provisionally, but confirming it before it becomes a citation is
+what separates a real finding from an anecdote that happened twice.
+
+---
+
+## Finding 23 — the Reviewer agent, revisited with a stronger model: individually correct, collectively unable to converge
+
+Finding 19 shelved the Reviewer agent after a 14B reviewing a 14B produced
+a self-contradiction (issue #93: told the coder to revert a task's own
+goal, then reversed itself). Worth a clean re-test once `qwen3-coder:30b`
+became the default - same model reviewing itself, avoiding cross-model
+swap latency, and genuinely more capable than the 14B that failed the
+first test.
+
+**First clean run (`reviewer-30b-v2`, MAX_ATTEMPTS=5) came back stark:**
+"reached Godot" collapsed from the no-reviewer baseline's 8/10 down to
+1/10. The reviewer rejected 34 of 37 review calls - a 92% rejection rate.
+That number alone looked like Finding 19 repeating itself. It wasn't:
+reading actual rejections (task 6/issue 184's three review cycles) showed
+**specific, correct, previously-confirmed catches** - a bare class
+reference that crashes the gdUnit4 runner (the exact Finding 2 pattern),
+a `get_tree()`-before-`add_child()` null-reference bug (the exact Finding
+22 pattern, discovered via manual debugging on the very same day), and a
+plausible, appropriately-hedged concern about missing a physics-frame
+await. None of it resembled #93's flat self-contradiction. **The
+reviewer's individual judgment was sound.** The collapse in "reached
+Godot" had a different, more mundane explanation: every rejection
+consumes one of a fixed 5-attempt budget the coder also needs for
+ordinary validation-fix cycles, so a task needing 3 real review-fix
+rounds had only 2 attempts left to ever reach Godot at all.
+
+**Tested that theory directly** rather than assume it: gave
+reviewer-enabled runs 2 extra attempts (7 instead of 5), reasoning that
+review and validation shouldn't have to compete for the same slots.
+`reviewer-30b-v3` came back **worse, not better**: tasks ending in
+permanent reviewer deadlock rose from 5/10 to 7/10, "reached Godot" stayed
+flat at 1/10, and one task (#4, issue 192) burned 1578 seconds - 26
+minutes - of real, successful inference calls and still ended rejected.
+Traced both outliers to their real causes rather than leaving them as
+loose threads: task 8's early cutoff was the 180s call timeout correctly
+catching a genuine stuck generation (the safety net from earlier this
+week working exactly as intended, for the first time under real
+adversarial conditions); task 4's marathon was simply the doubled call
+volume (coder + reviewer, every attempt) compounding with ordinary
+session-length slowdown - no crash, just full price paid for zero result.
+
+**Conclusion: this was never a budget problem, it's a convergence
+problem.** More room to iterate didn't help the coder and reviewer reach
+agreement - it just let them spend longer failing to. Disabled again,
+with both rounds of evidence documented inline in `config/models.yaml`
+rather than just the original.
+
+**Lesson, and it sharpens Finding 19 rather than repeating it:** a
+reviewer being *right* is necessary but not sufficient for a review loop
+to be worth running. Two models (or one model in two roles) each behaving
+reasonably on their own turn can still fail to converge as a pair -
+correct-and-stuck is a different, subtler failure mode than
+wrong-and-contradictory, and it took two full bench runs and reading real
+rejection text (not just counting them) to tell the difference. The
+budget fix was worth testing rather than assuming it wouldn't work -
+it was a clean, disprovable hypothesis, and disproving it cleanly closes
+this question for now rather than leaving it as an assumption. Revisiting
+this again would need an actually different reviewer model, not more
+attempts of the same one talking to itself.
 
 ---
 
 ## Open items carried forward
 
-- [ ] Finding 22's odd pattern: the test_file guard fired on attempts 2
-      and 4 specifically, every single time, across all three full
-      qwen3-coder:30b runs of issue #156/task 1. Never attempt 1, 3, or 5.
-      Too consistent to be coincidence, not yet understood.
+- [x] Finding 22's original claim (test_file guard on attempts 2 & 4
+      specifically) was checked against the real bench traces and found
+      to be a false pattern - overgeneralized from two manual runs.
+      Correcting it surfaced a real bug instead: runs/<issue>/ silently
+      overwrote its own trace history on repeated manual invocations.
+      Fixed by archiving stale run directories before a fresh run starts.
 
 - [x] `/task feedback` and `/task retry` exercised end-to-end on a real
       needs-human task (#60) — confirmed working: feedback comment posted,
@@ -683,12 +774,13 @@ a dedicated look if it keeps recurring on other tasks.
       the runner (Finding 17's generalization of Finding 2), or just the
       two specific cases seen so far (bare class refs, ambiguous `:=`
       inference). Worth a deliberate repro sweep if this keeps recurring.
-- [ ] Reviewer agent (Finding 19) — disabled by default; worth one clean
-      re-test with a stronger/different review model than the coder before
-      concluding the whole approach is dead, since same-class review was
-      the specific thing that failed, not necessarily review in general.
-      Must run as a single isolated variable next time, not bundled with
-      other changes.
+- [x] Reviewer agent (Finding 19, revisited in Finding 23) — re-tested
+      with the stronger qwen3-coder:30b reviewing itself, and again with a
+      bigger attempt budget to rule out starvation. Both came back worse
+      than no reviewer at all: "reached Godot" stuck at 1/10 regardless of
+      budget, individual rejections were mostly correct but the loop
+      doesn't converge. Disabled again; only worth revisiting with a
+      genuinely different reviewer model, not more of the same one.
 - [x] Ollama calls had no timeout (open since night one) — fixed, and fixed
       TWICE (Finding 21): the first attempt used ThreadPoolExecutor, which
       raised the right exception but still let the process hang for

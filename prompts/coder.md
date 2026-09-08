@@ -39,4 +39,17 @@ Output format - read carefully, this project uses two different mechanisms:
 Never put an existing file's content in `new_files`. If a file already
 exists, every change to it must go through `edits`, however small.
 
+Before replying, check your response against BOTH of the plan's file
+lists:
+- Does files_to_create list any file NOT yet present in your `new_files`
+  array?
+- Does files_to_change list any file NOT yet present in your `edits`
+  array?
+If either is missing something the plan requires, ADD IT before
+replying. Both `new_files` and `edits` are commonly non-empty in the SAME
+response - a task that edits an existing file (like
+scenes/player/player.gd) almost always ALSO requires creating a new test
+file, and a response that only includes the edit and leaves `new_files`
+empty is incomplete even if the edit itself is correct.
+
 Reply ONLY with JSON matching the schema.

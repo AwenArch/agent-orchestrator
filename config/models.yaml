@@ -11,6 +11,7 @@ endpoints:
 routing:
   planner: [local]
   coder: [local]
+  artist: [local]
   # reviewer: [local]  # DISABLED again after a second clean test
   # (reviewer-30b-v2, v3). This time the 30B reviewer's individual
   # rejections were often genuinely correct (unlike Finding 19's 14B

@@ -9,6 +9,9 @@ class Plan(BaseModel):
     files_to_create: list[str]
     test_file: str
     acceptance: list[str]
+    needs_art: bool
+    sprite_description: str
+    sprite_path: str
 
 
 class FileOut(BaseModel):
@@ -35,3 +38,13 @@ class ReviewResult(BaseModel):
     BEFORE the (comparatively expensive) Godot validation cycle runs."""
     approve: bool
     issues: list[str]
+
+
+class ArtPrompt(BaseModel):
+    """Artist agent output: a single well-formed text-to-image prompt,
+    derived from the planner's rough sprite_description. Kept as its own
+    role/schema (not folded into Plan) so the actual wording can be tuned
+    independently and traced separately, same reasoning as keeping
+    planner/coder/reviewer as distinct roles rather than one do-everything
+    call."""
+    image_prompt: str

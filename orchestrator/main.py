@@ -2,17 +2,16 @@
 run_task() is also imported directly by orchestrator.daemon - the CLI
 command below is a thin wrapper around it, not a separate code path."""
 import logging
+import time
 
 import typer
 from rich import print as rprint
 
 from orchestrator import llm
-import time
-
 from orchestrator.config import CFG, ROOT, RUNS
 from orchestrator.github_client import repo
-from orchestrator.schemas import CodeOut, Plan, ReviewResult
-from orchestrator.tools import godot
+from orchestrator.schemas import ArtPrompt, CodeOut, Plan, ReviewResult
+from orchestrator.tools import comfyui, godot
 from orchestrator.tools import repo as rt
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -54,11 +53,28 @@ def _clear_state_labels(issue) -> None:
             pass
 
 
+def _build_context(workdir, plan, extra_files: list[str]) -> str:
+    """Assembles the file-content context shown to the coder. When the plan
+    requested a sprite, prepends a note that it already exists on disk -
+    without this, the coder has no way to know an image was generated
+    upstream and might invent a wrong path, or worse, not reference it at
+    all. This runs on every context rebuild in the retry loop, not just the
+    first one, so the note can't silently drop out after a retry."""
+    ctx = rt.read_files(workdir, sorted(set(extra_files + EXEMPLARS)))
+    if plan.needs_art and plan.sprite_path:
+        ctx = (f"NOTE: A sprite image has ALREADY been generated and saved "
+              f"to res://{plan.sprite_path} - do NOT attempt to create or "
+              f"generate this image yourself. Reference it in code via "
+              f'preload("res://{plan.sprite_path}") or load(...) as '
+              f"appropriate.\n\n" + ctx)
+    return ctx
+
+
 def run_task(issue_number: int) -> dict:
     """Runs one task end to end. Returns {"ok", "issue", "pr_url", "log"}.
     Does not raise for an ordinary task failure (that's a needs-human
     result); may raise for real infrastructure errors (Ollama down, git
-    failure) - the daemon catches those separately."""
+    failure, ComfyUI unreachable) - the daemon catches those separately."""
     _archive_stale_run_dir(issue_number)
     gh = repo()
     task = gh.get_issue(issue_number)
@@ -87,7 +103,28 @@ def run_task(issue_number: int) -> dict:
                         + "\n```")
     rprint(f"[green]Plan:[/green] {plan.summary}")
 
-    context = rt.read_files(workdir, sorted(set(plan.files_to_change + EXEMPLARS)))
+    # --- Artist step: one-shot, before the coder loop starts. A bad
+    # generation isn't something Godot validation can explain how to fix,
+    # so it doesn't belong in the retry loop the way a code error does. A
+    # ComfyUI failure here raises and surfaces as a real infrastructure
+    # crash (same as Ollama being down), not a silent skip.
+    if plan.needs_art:
+        rprint(f"[bold]Generating sprite:[/bold] {plan.sprite_description}")
+        art_prompt = llm.call(
+            "artist", str(issue_number), "art-prompt",
+            system="You are a precise art-prompt writer. Reply ONLY with "
+                   "JSON matching the schema.",
+            user=_prompt("artist", sprite_description=plan.sprite_description,
+                         task=f"{task.title}\n\n{task.body or ''}"),
+            schema=ArtPrompt)
+        sprite_path = workdir / plan.sprite_path
+        comfyui.generate_sprite(art_prompt.image_prompt, sprite_path)
+        rprint(f"[green]Sprite saved:[/green] {plan.sprite_path}")
+        task.create_comment(
+            f"## Sprite generated\nPrompt: `{art_prompt.image_prompt}`\n"
+            f"Saved to `{plan.sprite_path}`")
+
+    context = _build_context(workdir, plan, plan.files_to_change)
     feedback_block = ""
     ok, log = False, ""
 
@@ -155,17 +192,10 @@ def run_task(issue_number: int) -> dict:
                 "it wasn't among the files you wrote or edited this time. "
                 f"Every response MUST include '{plan.test_file}' - in "
                 "new_files if it's new, or in edits if it already exists.")
-            context = rt.read_files(
-                workdir, sorted(set(plan.files_to_change + touched + EXEMPLARS)))
+            context = _build_context(workdir, plan,
+                                     plan.files_to_change + touched)
             continue
 
-        # --- Reviewer pass: cheap second look before the expensive Godot
-        # cycle. Reads the REAL current content of every touched file
-        # (post-write, post-edit) - not a diff in isolation - since that's
-        # what actually gets tested. Godot remains the real authority: a
-        # rejection here skips straight to a retry (no Godot run wasted on
-        # something a review already flagged); an approval still goes on
-        # to the real validation, never treated as sufficient on its own.
         review = None
         if reviewer_enabled:
             touched_content = rt.read_files(workdir, touched)
@@ -185,8 +215,8 @@ def run_task(issue_number: int) -> dict:
                 "reached testing, for these reasons:\n" +
                 "\n".join(f"- {i}" for i in review.issues) +
                 "\nFix these specific issues.")
-            context = rt.read_files(
-                workdir, sorted(set(plan.files_to_change + touched + EXEMPLARS)))
+            context = _build_context(workdir, plan,
+                                     plan.files_to_change + touched)
             continue
 
         ok, log = godot.validate(workdir, touched)
@@ -198,8 +228,7 @@ def run_task(issue_number: int) -> dict:
                           "\nFix these exact errors. For existing files, use "
                           "a small, targeted edit via `edits` - never "
                           "rewrite the whole file.")
-        context = rt.read_files(
-            workdir, sorted(set(plan.files_to_change + touched + EXEMPLARS)))
+        context = _build_context(workdir, plan, plan.files_to_change + touched)
 
     if not ok:
         _clear_state_labels(task)

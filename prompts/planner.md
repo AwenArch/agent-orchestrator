@@ -15,4 +15,19 @@ names the single gdUnit4 test file that will prove the task is done, and gives
 2-4 acceptance criteria in plain language. Keep the file lists minimal - only
 what this task requires. files_to_change must only contain files that already
 exist in the tree above; new files go in files_to_create.
+
+Also decide whether this task needs a new visual sprite/image asset:
+- needs_art: true ONLY if the task requires a NEW visual asset that doesn't
+  already exist (a new character, item, enemy, tile, icon). false for tasks
+  that only touch logic, tests, or refactor existing code - do not request
+  art for those.
+- sprite_description: if needs_art is true, a short plain-language
+  description of what the image should show (e.g. "a gold coin icon" or
+  "a green slime enemy, front-facing"). Leave as an empty string if
+  needs_art is false.
+- sprite_path: if needs_art is true, the res:// path where the image should
+  be saved, following the project's assets/sprites/<name>/<name>.png
+  convention (e.g. assets/sprites/coin/coin.png). Leave as an empty string
+  if needs_art is false.
+
 Reply ONLY with JSON matching the schema.

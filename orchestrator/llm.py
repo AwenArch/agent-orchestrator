@@ -81,6 +81,28 @@ def _pick(role: str) -> dict:
     raise RuntimeError(f"no endpoint reachable for role '{role}'")
 
 
+def unload(role: str) -> None:
+    """Explicitly frees a model's memory before a competing process (e.g.
+    ComfyUI) needs it. Ollama normally keeps a model resident between calls
+    (OLLAMA_KEEP_ALIVE) specifically to avoid reload cost - the right
+    default most of the time, but it means the model stays loaded even
+    during a gap where nothing needs it, competing for memory with
+    anything else running concurrently. Confirmed necessary directly: a
+    live task run (issue #210) showed Ollama still holding 19GB/24GB right
+    when ComfyUI needed its own ~11-15GB, causing a real 180s timeout.
+
+    Best-effort: if the unload call itself fails, this doesn't raise - the
+    caller's own timeout is still the real safety net, and a failed unload
+    just means the next step fights for memory the way it did before this
+    fix existed, not a new failure mode."""
+    ep = _pick(role)
+    client = ollama.Client(host=ep["url"])
+    try:
+        client.chat(model=ep["model"], messages=[], keep_alive=0)
+    except Exception:
+        pass
+
+
 def _trace(task_id, step, attempt, ep, msgs, text, secs, raw) -> None:
     d = RUNS / str(task_id)
     d.mkdir(parents=True, exist_ok=True)

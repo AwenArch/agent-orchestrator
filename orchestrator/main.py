@@ -117,6 +117,10 @@ def run_task(issue_number: int) -> dict:
             user=_prompt("artist", sprite_description=plan.sprite_description,
                          task=f"{task.title}\n\n{task.body or ''}"),
             schema=ArtPrompt)
+        llm.unload("artist")  # free memory before ComfyUI needs its own -
+                              # confirmed necessary live (issue #210: a
+                              # 180s timeout from Ollama and ComfyUI both
+                              # wanting most of a 24GB machine at once)
         sprite_path = workdir / plan.sprite_path
         comfyui.generate_sprite(art_prompt.image_prompt, sprite_path)
         rprint(f"[green]Sprite saved:[/green] {plan.sprite_path}")

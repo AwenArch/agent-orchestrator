@@ -923,3 +923,15 @@ of days it sat as an open item rather than a closed one.
       specific tasks or models. Standardized on `brew services` only.
 
 ---
+
+## Note (undated, pending write-up) - artist agent built + a new scene-file gap found
+
+Artist agent (ComfyUI + Z-Image-Turbo + pixel-art LoRA) wired into
+run_task() and proven live, twice, including a real memory-contention bug
+found and fixed on the spot (llm.unload() before ComfyUI runs - Ollama and
+ComfyUI both wanting most of a 24GB machine at once caused a real 180s
+timeout, issue #210/211). A separate, genuinely new failure category
+surfaced afterward: the coder can't reliably hand-write valid .tscn scene
+syntax from scratch (issue #211, coin.tscn - "Expected '['" parse error).
+Likely fix: a template scene file as an exemplar, same technique that
+fixed the is_on_floor()-faking gap in Finding 22 - not yet built.

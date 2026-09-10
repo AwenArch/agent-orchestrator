@@ -103,6 +103,27 @@ def run_task(issue_number: int) -> dict:
                         + "\n```")
     rprint(f"[green]Plan:[/green] {plan.summary}")
 
+    # A file the planner lists under files_to_change might not actually
+    # exist in THIS fresh checkout - e.g. prior /task feedback can
+    # describe content from an earlier, never-merged attempt (issue #212:
+    # feedback described a typo in coin.gd from a prior failed run,
+    # misleading the planner into treating it as already-existing, when
+    # the fresh checkout of main never had it at all - every attempt then
+    # failed identically, the coder correctly writing it as new_files and
+    # the scope filter correctly rejecting it since only files_to_change
+    # listed it). Whether a file exists is a plain fact we can just check
+    # instead of trusting the model's guess about it.
+    real_files_to_change = []
+    for f in plan.files_to_change:
+        if (workdir / f).exists():
+            real_files_to_change.append(f)
+        else:
+            rprint(f"[yellow]Plan listed '{f}' under files_to_change but it "
+                  "doesn't exist in this checkout - treating as "
+                  "files_to_create instead.[/yellow]")
+            plan.files_to_create.append(f)
+    plan.files_to_change = real_files_to_change
+
     # --- Artist step: one-shot, before the coder loop starts. A bad
     # generation isn't something Godot validation can explain how to fix,
     # so it doesn't belong in the retry loop the way a code error does. A

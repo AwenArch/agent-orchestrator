@@ -851,7 +851,165 @@ of days it sat as an open item rather than a closed one.
 
 ---
 
+## Finding 26 — the Artist agent: built from raw tool install to a proven live pipeline run
+
+Built the third and final agent role from the original architecture doc -
+Coder and Reviewer existed; Artist never did until this session. Full
+arc, same discipline as every other capability added this project: prove
+the raw integration standalone before wiring it into `run_task()`.
+
+**Tooling, chosen and verified rather than assumed:** ComfyUI (native
+install, MPS backend - `Total VRAM 24576 MB` confirmed matching this
+machine's unified memory exactly) over Draw Things, since the whole
+point is programmatic control from Python, and ComfyUI's API-format
+workflow export is the mature, well-documented path for that. Checkpoint:
+Z-Image-Turbo (a split architecture - separate diffusion model, Qwen3-4B
+text encoder, and VAE, not a single fused file like SDXL - discovered by
+reading the actual downloaded filenames rather than assuming). Style:
+the `elusarca-pixel-art-style-lora-zimage-turbo` LoRA, verified legitimate
+before downloading (Apache 2.0, HF's own "Safe" scan, purpose-built for
+this exact checkpoint) and then verified *useful* with a real controlled
+comparison - same prompt, same seed, LoRA on vs. off - showing genuine
+blocky pixel edges replacing the base model's smooth anti-aliased output.
+
+**The client (`orchestrator/tools/comfyui.py`):** submit → poll → download
+→ background-removal, built against the real exported workflow JSON (node
+IDs pulled from an actual screenshot of the graph, not guessed), with a
+180s poll timeout from the start this time - Finding 21's Ollama-timeout
+lesson (a fix that isn't verified to actually let the process exit isn't
+a real fix) applied proactively instead of learned the hard way twice.
+Verified standalone first (`test_comfyui_manual.py`, a fixed seed, real
+sanity checks on the output) before touching `run_task()` at all.
+
+**Wired into the pipeline:** `Plan` gained `needs_art`/`sprite_description`
+/`sprite_path` fields (the planner decides whether a task needs a new
+visual asset); a new `artist` role turns the rough description into a
+real generation prompt; the sprite generates once, before the coder loop
+starts, since a bad generation isn't something Godot validation can
+explain how to fix the way a code error is. A `_build_context()` helper
+ensures the coder is told a sprite already exists at its real path on
+every context rebuild in the retry loop, not just the first one.
+
+**A real infrastructure bug found and fixed under live conditions, not in
+isolation:** the very first live run timed out at 180s. `ollama ps` showed
+`qwen3-coder:30b` still resident at 19GB, `top` showed 23G/24G used - the
+planner and artist LLM calls had left the model loaded (by design, for
+reload-cost avoidance) right when ComfyUI needed its own 11-15GB on the
+same 24GB machine. The earlier standalone test never caught this, because
+nothing else was competing for memory at the time it ran. Fixed with
+`llm.unload()` - an explicit `keep_alive: 0` call right after the artist
+step finishes, before ComfyUI starts - confirmed working on the next two
+live runs, no further timeouts.
+
+**Result:** a real sprite (`assets/sprites/coin/coin.png`) generated
+inside an actual task run and committed to the game repo - the first
+agent-generated game asset in the project's history, produced entirely
+end to end: planner decided art was needed, artist wrote the prompt,
+ComfyUI generated it, the coder referenced the resulting file while
+writing real game logic.
+
+**Lesson:** the standalone-test-first discipline caught most things, but
+not everything - a resource-contention bug between two entirely different
+subsystems (an LLM server and an image model) only showed up under real,
+combined load. Worth remembering for any future addition that shares this
+machine's memory with what's already running: proving a piece works in
+isolation is necessary, not sufficient, once it has to coexist with
+something else.
+
+---
+
+## Finding 27 — the .tscn exemplar didn't transfer, unlike every prior case
+
+Finding 22 established a strong pattern: when a prose rule alone failed
+twice, a real working exemplar file fixed it on the very next attempt
+(the floor-faking problem). Built a `.tscn` scene by hand in the actual
+Godot editor - guaranteed byte-correct syntax, no risk of hand-typing the
+exact class of error being fixed - wired it into the coder's always-shown
+exemplars, and added a CONVENTIONS.md rule naming exactly what to copy
+and what to omit (real `uid`/`unique_id` values specifically excluded,
+since copying a template's literal identifiers into multiple different
+scene files risks two files claiming the same one).
+
+**It didn't work.** The very next attempt's `coin.tscn` opened with
+`extends Area2D` - GDScript class syntax, not scene format at all - and
+used old, Godot-3-flavored resource references (`SubResource( 1 )` with a
+bare numeric ID and padded parentheses, `ExtResource( "coin.png" )`
+naming a raw filename instead of a proper resource ID) that don't
+resemble the real, correct template sitting in its own context window at
+all. The model reached for something from memory instead of the working
+example directly in front of it.
+
+**Why this case might differ from Finding 22's, worth stating as a
+genuine hypothesis rather than a settled answer:** `.tscn` isn't GDScript
+- it's a separate resource-definition format the model has less "this is
+code, follow the visible structure" instinct for, and it's exactly the
+kind of file format likely to be heavily represented in training data by
+older (Godot 3-era) community examples, making the model's prior belief
+about "what a scene file looks like" more entrenched than a physics-test
+pattern's prior ever was. Not confirmed - just the most plausible
+explanation available without more evidence.
+
+**Lesson:** "show an example" is a strong technique, not a universal one.
+Finding 22 was right that it beat a prose rule for one specific failure
+class; this is direct evidence it doesn't automatically generalize to
+every failure class, especially ones tied to a non-code file format with
+its own separate, possibly conflicting training-data prior. The fix here
+likely needs something stronger than an exemplar alone - not yet built,
+worth a dedicated pass (a more forceful, repeated instruction; building
+scenes in code via the same pattern gdUnit4 tests already use instead of
+raw `.tscn` text; or accepting this as a durable ceiling for whole-scene
+authorship and routing it through human-in-the-loop instead).
+
+---
+
+## Finding 28 — the newline-collapse transcription defect: confirmed recurring, not a one-off
+
+First seen three days earlier (issue #211's original run): `search` and
+`replace` blocks with a `\n` missing immediately after a block-opening
+`:` - `func _physics_process(delta: float) -> void:\t# NOTE: ...` where a
+real newline should separate the colon from the next line. Read at the
+time as "likely a one-off, not enough evidence to draw a rule from" per
+Finding 22's own lesson about not overgeneralizing from a single sample.
+
+**It recurred**, in a different file, in a different session, in a
+different shape: a malformed nested class inside `test_coin.gd` -
+`class TestPlayer extends CharacterBody2D:\tfunc _on_coin_collected()
+-> void:\t\tprint(...)` - same defect, a colon immediately followed by a
+tab instead of a newline. This is what caused the "confusing" repeated
+edit failure in the same run: the coder searched `player.gd` three times
+for `func _on_coin_collected() -> void:` because that method only
+existed inside this malformed, improperly-nested class the model had
+accidentally generated in the *test* file - not because the model was
+stuck, but because it was accurately, repeatedly searching for something
+that genuinely didn't exist where it believed it did.
+
+**Two independent occurrences now confirmed** - this crosses the line
+from "maybe noise" to a real, trackable defect worth a name, even without
+a fix yet. Not yet understood: why specifically the character after a
+block-opening colon, and not elsewhere; whether it correlates with
+response length, generation speed, or something else measurable in the
+traces already being collected.
+
+**Lesson:** the same discipline that upgraded the test_file guard's
+"up from occasional" claim into a real, checked pattern (Finding 24)
+applies here in reverse - a plausible one-off is worth writing down
+provisionally and watching, not chasing prematurely with a rule built on
+a single data point. Two occurrences is still a small sample, but it's
+no longer zero evidence.
+
+---
+
 ## Open items carried forward
+
+- [ ] Finding 27: `.tscn` scene-writing gap - exemplar alone didn't fix it,
+      unlike every prior exemplar-based fix. Needs a stronger approach:
+      more forceful/repeated instruction, building scenes via code instead
+      of raw `.tscn` text, or accepting this as a durable ceiling routed
+      to human-in-the-loop.
+- [ ] Finding 28: the newline-collapse transcription defect (missing `\n`
+      after a block-opening `:`) - confirmed recurring across two
+      independent sessions/files, mechanism still not understood. Worth a
+      dedicated look if it appears a third time.
 
 - [x] Finding 22's original claim (test_file guard on attempts 2 & 4
       specifically) was checked against the real bench traces and found
@@ -923,15 +1081,3 @@ of days it sat as an open item rather than a closed one.
       specific tasks or models. Standardized on `brew services` only.
 
 ---
-
-## Note (undated, pending write-up) - artist agent built + a new scene-file gap found
-
-Artist agent (ComfyUI + Z-Image-Turbo + pixel-art LoRA) wired into
-run_task() and proven live, twice, including a real memory-contention bug
-found and fixed on the spot (llm.unload() before ComfyUI runs - Ollama and
-ComfyUI both wanting most of a 24GB machine at once caused a real 180s
-timeout, issue #210/211). A separate, genuinely new failure category
-surfaced afterward: the coder can't reliably hand-write valid .tscn scene
-syntax from scratch (issue #211, coin.tscn - "Expected '['" parse error).
-Likely fix: a template scene file as an exemplar, same technique that
-fixed the is_on_floor()-faking gap in Finding 22 - not yet built.

@@ -918,47 +918,69 @@ something else.
 
 ---
 
-## Finding 27 — the .tscn exemplar didn't transfer, unlike every prior case
+## Finding 27 — the .tscn exemplar test was invalid; the redesigned fix actually works
 
 Finding 22 established a strong pattern: when a prose rule alone failed
 twice, a real working exemplar file fixed it on the very next attempt
 (the floor-faking problem). Built a `.tscn` scene by hand in the actual
-Godot editor - guaranteed byte-correct syntax, no risk of hand-typing the
-exact class of error being fixed - wired it into the coder's always-shown
-exemplars, and added a CONVENTIONS.md rule naming exactly what to copy
-and what to omit (real `uid`/`unique_id` values specifically excluded,
-since copying a template's literal identifiers into multiple different
-scene files risks two files claiming the same one).
+Godot editor - guaranteed byte-correct syntax - wired it into the
+coder's always-shown exemplars, and added a CONVENTIONS.md rule.
 
-**It didn't work.** The very next attempt's `coin.tscn` opened with
-`extends Area2D` - GDScript class syntax, not scene format at all - and
-used old, Godot-3-flavored resource references (`SubResource( 1 )` with a
-bare numeric ID and padded parentheses, `ExtResource( "coin.png" )`
-naming a raw filename instead of a proper resource ID) that don't
-resemble the real, correct template sitting in its own context window at
-all. The model reached for something from memory instead of the working
-example directly in front of it.
+**The first result looked like a clean negative** - the very next
+attempt's `coin.tscn` opened with `extends Area2D` (GDScript class
+syntax, not scene format) and old, Godot-3-flavored resource references,
+resembling nothing in the supposed exemplar. Read at the time as "the
+model reached for memory instead of the working example in front of it."
 
-**Why this case might differ from Finding 22's, worth stating as a
-genuine hypothesis rather than a settled answer:** `.tscn` isn't GDScript
-- it's a separate resource-definition format the model has less "this is
-code, follow the visible structure" instinct for, and it's exactly the
-kind of file format likely to be heavily represented in training data by
-older (Godot 3-era) community examples, making the model's prior belief
-about "what a scene file looks like" more entrenched than a physics-test
-pattern's prior ever was. Not confirmed - just the most plausible
-explanation available without more evidence.
+**That reading was wrong, and the error was mine, not the model's:**
+checking `git log --all -- scenes/_template/pickup_template.tscn` came
+back completely empty. The template had been built locally in the editor
+but never committed or pushed - `_build_context()` reads from a fresh
+clone of `origin/main`, so the coder's context almost certainly showed
+"(does not exist yet)" for the exemplar, not real content. There was
+nothing to reach past. Same class of mistake this project has caught
+before (an untracked file quietly breaking a test's premise, same shape
+as the trace-overwrite bug in Finding 22) - just this time in the
+exemplar-authoring step, not the harness.
 
-**Lesson:** "show an example" is a strong technique, not a universal one.
-Finding 22 was right that it beat a prose rule for one specific failure
-class; this is direct evidence it doesn't automatically generalize to
-every failure class, especially ones tied to a non-code file format with
-its own separate, possibly conflicting training-data prior. The fix here
-likely needs something stronger than an exemplar alone - not yet built,
-worth a dedicated pass (a more forceful, repeated instruction; building
-scenes in code via the same pattern gdUnit4 tests already use instead of
-raw `.tscn` text; or accepting this as a durable ceiling for whole-scene
-authorship and routing it through human-in-the-loop instead).
+**Rather than just fix the commit gap and rerun the original three-node
+design, redesigned around a real insight while already in there:** the
+model has repeatedly proven reliable at building node trees *in code*
+(`test_floor_pattern_example.gd`'s `CollisionShape2D.new()` pattern,
+proven since Finding 22) - the actual failure was specifically hand-
+authoring raw `.tscn` resource syntax, not building scene structure in
+general. Shrunk the template to a near-empty `.tscn` (one root node, two
+`ext_resource` lines, zero `sub_resource` blocks) with all child-node
+construction moved into the script's `_ready()`. Committed it for real
+this time, confirmed with `git log` that a real commit existed before
+testing again.
+
+**Result: the redesign works.** A full task run produced a `coin.tscn`
+that parsed and loaded cleanly - zero scene-syntax errors anywhere across
+five attempts, a first. The task still didn't pass, but for reasons
+worth being precise about, since two wrong theories got chased before
+finding the real one: first suspected the coder left the script pointing
+at `pickup_template.gd` instead of the new script (checked the actual
+`.tscn` - wrong, it was correctly retargeted); then suspected the test
+file was loading the exemplar's scene path instead of the new one
+(checked the actual test file - wrong, every `load()` correctly pointed
+at `coin.tscn`). Pulling the *exact* attempt-2 response from its trace
+file (not a later attempt's leftover disk state) finally showed the real
+bug: `var circle := CircleShape2D.new()` followed by `pcircle.radius =
+...` - a plain undefined-variable typo, unrelated to scene-writing,
+exemplars, or anything this investigation was actually about. Ordinary
+noise, the same class of mistake found throughout this whole project.
+
+**Lesson, really two of them:** first, the same "verify before trusting
+a negative result" discipline that corrected Finding 22's test_file-guard
+overgeneralization applies here too - a clean negative test is only
+informative if the test actually ran the way it was assumed to, and
+"the file exists locally" is not the same claim as "the file is in the
+repo the harness actually reads from." Second, a wrong first guess (or
+second) at a root cause is a normal, low-cost part of debugging as long
+as each guess gets checked against real evidence and discarded when
+wrong, rather than patched over blind - exactly what happened here,
+three times over, before landing on the real answer.
 
 ---
 
@@ -1001,11 +1023,12 @@ no longer zero evidence.
 
 ## Open items carried forward
 
-- [ ] Finding 27: `.tscn` scene-writing gap - exemplar alone didn't fix it,
-      unlike every prior exemplar-based fix. Needs a stronger approach:
-      more forceful/repeated instruction, building scenes via code instead
-      of raw `.tscn` text, or accepting this as a durable ceiling routed
-      to human-in-the-loop.
+- [x] Finding 27: `.tscn` scene-writing gap - the original negative test
+      was invalid (exemplar was never committed). Redesigned as a near-
+      empty scene + code-built children, confirmed working: zero scene-
+      syntax errors across a full 5-attempt run. The bug that remained
+      in that run was an unrelated ordinary typo, not a scene-writing
+      failure.
 - [ ] Finding 28: the newline-collapse transcription defect (missing `\n`
       after a block-opening `:`) - confirmed recurring across two
       independent sessions/files, mechanism still not understood. Worth a

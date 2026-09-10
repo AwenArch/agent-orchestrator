@@ -1021,6 +1021,72 @@ no longer zero evidence.
 
 ---
 
+## Finding 29 — two real planner/harness bugs found chasing one task, both fixed with hard evidence, landing at a clean ordinary ceiling
+
+Continuing the same issue #212 investigation (coin pickup - the task
+behind Findings 27 and the corrected .tscn redesign), two further rounds
+of "guess, then check, then correct the guess" turned up two genuinely
+new, real bugs - neither about scene-writing, both about the planner's
+file-scoping decisions.
+
+**Bug 1: prior feedback can describe a file from a never-merged attempt,
+misleading the planner into thinking it already exists.** After leaving
+feedback about a typo in `coin.gd`, the very next run failed identically
+across all 5 attempts - `files_to_change` listed `scenes/coin/coin.gd`,
+but a fresh checkout of `main` never had it (every prior run of this
+issue had ended in `NEEDS HUMAN`, nothing ever merged). The coder
+correctly tried to write it as new, the scope filter correctly rejected
+it since only `files_to_change` listed it. Confirmed directly from the
+real plan JSON before fixing anything. Fixed structurally, not with a
+prompt tweak: right after the plan is made, any `files_to_change` entry
+that doesn't actually exist on disk gets silently reclassified into
+`files_to_create`. This checks a plain fact instead of trusting the
+model's inference about ambiguous context - genuinely more robust than
+asking the planner to reason about it correctly, and confirmed working
+twice now, on two different files (`coin.gd`, then independently
+`test_coin.gd` a run later), not a narrow one-off patch.
+
+**Bug 2: the planner can omit the scene file entirely for a task that
+obviously needs one.** With bug 1 fixed, the next failure was `Cannot
+open file 'res://scenes/coin/coin.tscn'` - checked the actual plan JSON
+directly rather than guess, and `coin.tscn` was never in `files_to_create`
+or `files_to_change` at all. Not a coder mistake - the coder correctly
+never touched a file outside its plan's scope; the plan itself simply
+never asked for it. Fixed with an explicit planner.md instruction: any
+task creating a new interactive object must include both its script AND
+its scene file, not just the script.
+
+**Result: with both fixed, every one of 5 attempts reached real Godot
+validation** - zero scope rejections, zero test_file guard hits, zero
+unrecovered edit failures. That's the cleanest possible failure shape,
+the same honest ceiling this whole project has measured since task 1:
+ordinary code-logic iteration, not a harness or planning problem anymore.
+
+**A loose thread, deliberately not chased further:** the final remaining
+error was the identical text seen three investigation-turns earlier -
+`Invalid access to property or key 'collected' on a base object of type
+'Area2D (pickup_template.gd)'` - which that earlier turn *already proved*
+was misleading (the real cause then was an unrelated `pcircle` typo, not
+an actually-wrong script reference). Given how many times a plausible-
+looking error text turned out to have a different real cause across this
+same investigation, this was deliberately left unread rather than
+re-diagnosed on pattern-match alone - worth checking properly next time
+this task is revisited, not worth assuming now.
+
+**Lesson:** this whole arc - Finding 27's corrected negative result, this
+Finding's two further bugs - is really one continuous demonstration of
+the same discipline applied at increasing depth: a clean failure is only
+informative once its actual cause is confirmed, not inferred from what
+the error message *sounds like* it's saying. Three separate wrong guesses
+got corrected in this investigation alone by going back to source
+evidence every time - the plan JSON, the exact trace file, the real file
+list - rather than trusting a plausible story. Two of those corrections
+turned into real, durable fixes; the field is meaningfully more solid for
+it than if the first plausible-sounding explanation had been accepted
+and shipped.
+
+---
+
 ## Open items carried forward
 
 - [x] Finding 27: `.tscn` scene-writing gap - the original negative test
@@ -1033,6 +1099,16 @@ no longer zero evidence.
       after a block-opening `:`) - confirmed recurring across two
       independent sessions/files, mechanism still not understood. Worth a
       dedicated look if it appears a third time.
+- [x] Finding 29: two planner scoping bugs found chasing issue #212 -
+      files_to_change entries that don't exist on disk (feedback
+      describing a never-merged file misled the planner), and the
+      planner omitting a needed .tscn from either file list entirely.
+      Both fixed and confirmed - a full run reached real Godot validation
+      on all 5 attempts with zero scope/guard/edit failures. A loose
+      thread deliberately left unchecked: the final error repeated
+      Finding 27's earlier misleading error text verbatim - worth reading
+      properly (not pattern-matching against the earlier, different,
+      cause) next time this task is revisited.
 
 - [x] Finding 22's original claim (test_file guard on attempts 2 & 4
       specifically) was checked against the real bench traces and found

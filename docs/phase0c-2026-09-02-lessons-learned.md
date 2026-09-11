@@ -1087,6 +1087,76 @@ and shipped.
 
 ---
 
+## Finding 30 — issue #212 finished by hand: a wrong assumed API, and a real GDScript language gotcha, both isolated by methodical debug tracing
+
+Finding 29 left issue #212 at a clean ceiling - all 5 attempts reaching
+real Godot validation, zero harness or planner failures left. Rather than
+keep spending automated retries on ordinary code bugs, finished it by
+hand, the same way task 1's double-jump got finished months earlier -
+and the process surfaced two more real, worth-knowing bugs before the
+task became this project's first genuine merged, agent-illustrated
+feature.
+
+**Bug 1: a wrong assumption, caught by checking rather than trusting
+memory.** Coin code called `body.add_score(1)`, matching what an earlier
+session's trace had shown existing on `player.gd`. It failed silently
+(`has_method("add_score")` returned false) - checking the actual current
+`player.gd` directly showed the real method is `increment_score(amount)`,
+with no `get_score()` getter, just a public `score` var. The earlier
+memory was from a different `run_task()` invocation's fresh checkout;
+trusting it instead of re-verifying against *this* run's actual file was
+the same class of mistake Finding 27 already caught once this
+investigation - checked and corrected the same way.
+
+**Bug 2, the real find: GDScript lambda closures capture local variables
+by value, not by reference.** With the API fixed, a test still failed:
+`assert_bool(collected_emitted).is_true()` reported false, even though
+the coin/player interaction seemed obviously correct. Rather than guess
+again, added a print statement at every single step of the real code path
+- `_on_body_entered` firing, the name/method checks, `collect()`,
+`emit_signal()`, `queue_free()`. Every one printed, in the right order,
+proving the actual game logic was completely correct. That left only one
+place the bug could be: the test's own signal-detection pattern -
+`var collected_emitted := false; signal.connect(func(): collected_emitted
+= true)`. GDScript's lambdas capture outer local variables *by value* -
+the lambda sets its own private copy, never the real outer variable. Not
+a project-specific bug; a genuine, well-known-if-you-already-know-it
+GDScript language quirk that silently breaks the single most natural way
+anyone (human or model) would write "did this signal fire." Fixed by
+capturing a single-element Array instead (a reference type in GDScript),
+setting/reading `flag[0]` rather than `flag` directly.
+
+**Two smaller fixes alongside it:** `assert_bool(coin.is_inside_tree())`
+threw a runtime error once the coin was genuinely, fully freed - calling
+*any* method on a truly-freed object errors rather than returning a
+value; the correct check is `is_instance_valid(coin)`, which handles a
+freed reference safely. And the remaining two tests needed a third
+`physics_frame` await (2 wasn't reliably enough, matching what fixed the
+first test) - the same timing margin, applied consistently once proven.
+
+**Result: `VALIDATE: PASS`, real PR opened, reviewed, and merged** -
+[#213](https://github.com/AwenArch/zac-godot-sandbox/pull/213) - this
+project's first feature combining agent-generated art, agent-attempted
+logic, and a human-finished fix, actually landing on `main`. The lambda-
+capture rule got written into CONVENTIONS.md immediately, since it's
+exactly the kind of thing a future coder attempt would independently
+rediscover and lose time to, the same way this investigation did.
+
+**Lesson:** full debug-tracing - printing every single step of a
+suspected code path, not just checking the final assertion - is a real,
+distinct technique worth naming alongside this project's other debugging
+habits (checking claims against source, reading exact trace content).
+It's the only way this specific bug got isolated correctly: the
+alternative, plausible-sounding guesses (wrong overlap timing, wrong
+collision layers) would have led to real but irrelevant fixes, the same
+trap this whole investigation had already fallen into and climbed back
+out of several times over. When a full trace proves every step of the
+suspected code fired correctly, the bug isn't there anymore - it's
+somewhere else, and that's worth trusting over a plausible-sounding guess
+about where it "should" be.
+
+---
+
 ## Open items carried forward
 
 - [x] Finding 27: `.tscn` scene-writing gap - the original negative test
@@ -1104,11 +1174,12 @@ and shipped.
       describing a never-merged file misled the planner), and the
       planner omitting a needed .tscn from either file list entirely.
       Both fixed and confirmed - a full run reached real Godot validation
-      on all 5 attempts with zero scope/guard/edit failures. A loose
-      thread deliberately left unchecked: the final error repeated
-      Finding 27's earlier misleading error text verbatim - worth reading
-      properly (not pattern-matching against the earlier, different,
-      cause) next time this task is revisited.
+      on all 5 attempts with zero scope/guard/edit failures. The loose
+      thread (final error repeated Finding 27's misleading error text)
+      was chased down in Finding 30 - not the same cause at all: a wrong
+      assumed player API plus a genuine GDScript lambda-capture-by-value
+      bug in the test. Issue #212 finished by hand, merged as PR #213 -
+      this project's first real, complete, merged feature.
 
 - [x] Finding 22's original claim (test_file guard on attempts 2 & 4
       specifically) was checked against the real bench traces and found

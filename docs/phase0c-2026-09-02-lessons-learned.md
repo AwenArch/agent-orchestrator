@@ -1157,8 +1157,90 @@ about where it "should" be.
 
 ---
 
+## Finding 31 — a real engine crash traced to the coder violating an explicit "don't touch this file" instruction, with two ruled-out theories along the way
+
+Same day as the double-jump task passing clean on its first fully
+automated attempt (the CONVENTIONS.md rules mined from that task's own
+past failures finally proving themselves against a fresh try) - the next
+task, assembling the coin and HUD into the actual main playable scene,
+produced a genuinely new kind of failure worth its own record.
+
+**All 5 attempts reached real Godot validation** - zero scope rejections,
+zero test_file guard hits, zero edit-mechanics misses. That clean shape
+usually means an ordinary remaining logic bug. It wasn't one - the final
+state produced a real engine crash (signal 11) during test teardown, with
+no assertion report, just a raw C++ backtrace.
+
+**First theory, tested directly and cleanly ruled out:** memory pressure.
+`ollama ps` showed `qwen3-coder:30b` still resident at 19GB, `PhysMem`
+showed only 133M unallocated - a plausible cause, matching Finding 26's
+earlier real memory-contention bug. Explicitly unloaded the model
+(`llm.unload()`), confirmed 18GB free via `top`, reran - and got the
+**byte-for-byte identical crash backtrace**. That's a clean, hard
+negative result: memory pressure is not the cause, confirmed by testing
+rather than left as an assumption once it looked plausible.
+
+**Second question, also tested directly:** was this a cross-test
+resource interaction (something from an earlier test suite in the same
+process contaminating this one), or specific to this one test alone? Ran
+`test_main_scene.gd` in isolation via a scoped gdUnit4 `--add` path
+instead of the whole directory. Same crash, confirming it wasn't
+cross-test contamination - genuinely specific to this scene.
+
+**The isolated run's debug output (added the same way as Finding 30 -
+print() at every step) revealed the real cause before the crash even
+hit:** `main.tscn` contained **two separate, duplicate `[node
+name="Coin" type="Area2D"]` blocks** and a bare `HUD` stub, none of them
+scripted - meaning an earlier coder attempt had hand-edited `main.tscn`'s
+raw text directly, in direct violation of the task's explicit
+instruction not to ("Do NOT hand-edit main.tscn's raw text to add new
+scene-instance nodes - build this entirely in GDScript code"). A later
+attempt then *also* added the correct, instructed code-based
+instantiation in `main.gd` - leaving two competing construction paths
+colliding in the same file, evidently confusing the engine's node
+cleanup enough to trigger the crash (a `WARNING: Detected 1 possible
+orphan nodes` line appeared immediately before it).
+
+**Fixed by rebuilding `main.tscn` clean** - floor and Player only,
+matching exactly what was actually asked for, letting the code-based
+approach in `main.gd` be the sole source of truth. That surfaced one more
+real, small bug: `project.godot`'s `run/main_scene` had hardcoded the
+scene's old UID, which broke once the rewritten `.tscn` no longer
+declared one - fixed by switching that reference to a plain `res://`
+path instead, sidestepping UID staleness for this setting entirely.
+Final result: `VALIDATE: PASS`, 11/11 test cases across all 7 suites.
+
+**Why this is a genuinely different finding from anything earlier today:**
+Finding 27 already confirmed the model can reliably write a *new* `.tscn`
+from scratch, given the redesigned minimal-template pattern. This is a
+different, harder question entirely - not "can it author valid scene
+syntax," but "does it reliably respect an explicit prohibition when
+editing an already-existing, already-complex, hand-built scene file."
+The answer here, on one sample, was no. Worth distinguishing from Finding
+25's crash mechanism too - that was any *parse* error crashing test
+discovery; this crash happened with a scene that parsed and imported
+completely cleanly, only failing during runtime node cleanup. Two
+distinct crash triggers now confirmed, not one.
+
+**Lesson:** the order these three hypotheses got tested in - cheapest
+and most likely-seeming first (memory pressure, matching a very recent
+precedent), then a structural isolation test, then real debug tracing -
+each one either confirmed or cleanly falsified before moving to the next,
+is the same discipline that's carried this whole project. The eventual
+answer (a hand-edit violating an explicit instruction) wasn't the first
+guess, or even the second - it took ruling out two entirely reasonable
+alternatives with real evidence to get there honestly.
+
+---
+
 ## Open items carried forward
 
+- [ ] Finding 31: does the coder reliably respect an explicit "don't
+      hand-edit this file" instruction when working on an existing,
+      already-complex scene file? One confirmed violation (main.tscn,
+      issue #218) - not yet enough evidence to know if this is a real,
+      recurring pattern or a one-off. Watch for recurrence on any future
+      task that edits (not creates) a hand-built .tscn.
 - [x] Finding 27: `.tscn` scene-writing gap - the original negative test
       was invalid (exemplar was never committed). Redesigned as a near-
       empty scene + code-built children, confirmed working: zero scene-
